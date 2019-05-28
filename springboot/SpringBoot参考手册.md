@@ -63,7 +63,7 @@ public class Example {
 }
 ```
 
-####  @EnableAutoConfiguration注解
+#### @EnableAutoConfiguration注解
 
 第二个类级注释是@EnableAutoConfiguration。这个注释告诉Spring Boot到“猜测”您想要如何配置Spring，基于您已经添加的jar依赖项。由于Spring -boot-starter-web添加了Tomcat和Spring MVC，因此自动配置将假定您正在开发一个web应用程序并相应地设置Spring。
 
@@ -367,6 +367,136 @@ Spring Boot支持的几个库使用缓存来提高性能。例如，模板引擎
 缓存选项通常由应用程序中的设置配置。属性文件。例如，Thymeleaf提供spring.thymeleaf。缓存属性。spring-boot-devtools模块将自动应用合理的开发时配置，而不需要手动设置这些属性。
 
 ### 20.2 自动重启
+
+使用spring-boot-devtools的应用程序将在类路径上的文件发生更改时自动重启。当在IDE中工作时，这可能是一个有用的特性，因为它为代码更改提供了一个非常快的反馈循环。默认情况下，指向文件夹的类路径上的任何条目都将被监视，以进行更改。注意，某些资源(如静态资产和视图模板)不需要重启应用程序。
+
+注：由于DevTools监视类路径资源，触发重启的惟一方法是更新类路径。更新类路径的方式取决于使用的IDE。在Eclipse中，保存修改后的文件将导致更新类路径并触发重启。在IntelliJ IDEA中，构建项目(Build ->构建项目)将具有相同的效果。
+
+注：DevTools依赖于应用程序上下文的shutdown钩子在重启期间关闭它。如果您禁用了关机钩子(SpringApplication.setRegisterShutdownHook(false))。
+
+注：当决定类路径上的一个条目更改时是否应该触发重启时，DevTools会自动忽略名为spring-boot、spring-boot- DevTools、spring- boot-autoconfigure、spring-boot-actuator和spring-boot-starter的项目。
+
+#### 20.2.1 排除资源
+
+某些资源在被更改时不一定需要重新启动。例如,Thymeleaf模板可以就地编辑。默认情况下，在/META-INF/ maven、/META-INF/resources、/resources、/static、/public或/templates中更改资源不会触发重启，但会触发实时重新加载。如果希望自定义这些排除，可以使用spring.devtools.restart.exclude属性。例如，要只排除/static和/ public，您可以设置如下：
+
+```yaml
+spring.devtools.restart.exclude=static/**,public/**
+```
+
+#### 20.2.2 监控额外路径
+
+当您更改不在类路径上的文件时，您可能希望重新启动或重新加载应用程序。为此，使用spring.devtools.restart. extrapaths属性配置附加路径，以监视更改。您可以使用上面描述的spring.devtools.restart.exclude属性来控制附加路径下面的更改是会触发完全重启，还是只是实时重新加载。
+
+#### 20.2.3 禁止重启
+
+如果不希望使用restart特性，可以使用spring.devtools.restart.enabled属性禁用它。在大多数情况下，您可以在应用程序中设置这个参数。属性(这仍然初始化restart类加载器，但它不会监视文件更改)。
+
+如果您需要完全禁用restart支持，因为它不能与特定的库一起工作，那么您需要在调用SpringApplication.run(…)之前设置一个系统属性。例如：
+
+```java
+public static void main(String[] args) {
+    System.setProperty("spring.devtools.restart.enabled", "false");
+    SpringApplication.run(MyApp.class, args);
+}
+```
+
+
+
+# 第4部分：Spring Boot特性
+
+## 23 SpringApplication
+
+SpringApplication类提供了一种方便的方法来引导将从main()方法启动的Spring应用程序。在许多情况下，您可以只委托给静态对象SpringApplication.run方法:
+
+```java
+public static void main(String[] args) {
+	SpringApplication.run(MySpringConfiguration.class, args);
+}
+```
+
+### 23.1 启动失败
+
+如果您的应用程序启动失败，注册的故障分析器将有机会提供专用的错误消息和修复问题的具体操作。
+
+Spring Boot提供了许多FailureAnalyzer实现，您可以很容易地添加自己的实现。
+
+如果没有故障分析程序能够处理异常，您仍然可以显示完整的自动配置报告，以便更好地理解哪里出错了。为此，您需要启用debug属性或启用debug日志记录org.springframework.boot.autoconfigure.logging.AutoConfigurationReportLoggingInitialize。
+
+例如，如果使用java -jar运行应用程序，可以启用debug属性，如下所示：
+
+```shell
+java -jar myproject-0.0.1-SNAPSHOT.jar --debug
+```
+
+### 23.2 自定义Banner
+
+可以通过在类路径中添加一个banner .txt文件或设置banner.location属性来指定Banner文件位置来更改启动时打印的Banner。如果文件有一个不寻常的编码，您可以设置banner.charset指定字符集(默认为UTF-8)。除了文本文件，您还可以添加一个banner.gif、banner.jpg或banner.png图像文件到类路径，或设置banner.image.location属性。图像将被转换成ASCII艺术表示形式，并打印在任何文本横幅上方。
+
+Banner相关变量：
+
+| Variable                         | Description                                                  |
+| -------------------------------- | ------------------------------------------------------------ |
+| ${application.version}           | 应用程序在MANIFEST.MF中声明的版本号。例如实现版本:1.0打印为1.0。 |
+| ${application.formatted-version} | 应用程序在清单中声明的版本号。用于显示的MF格式(用方括号括起来，并以v为前缀)。例如(v1.0)。 |
+
+.................................
+
+如果希望以编程方式生成横幅，可以使用SpringApplication.setBanner(…)方法。使用org.springframework.boot。并实现您自己的printBanner()方法。
+
+如果您想禁用应用程序中的横幅，YAML映射到false，请确保添加引号：
+
+```yaml
+spring:
+	main:
+		banner-mode: "off"
+```
+
+### 23.3 定制SpringApplication
+
+如果您不喜欢SpringApplication的默认值，那么您可以创建一个本地实例并定制它。例如，要关掉Banner，你可以这样写：
+
+```java
+public static void main(String[] args) {
+    SpringApplication app = new SpringApplication(MySpringConfiguration.class);
+    app.setBannerMode(Banner.Mode.OFF);
+    app.run(args);
+}
+```
+
+注：传递给SpringApplication的构造函数参数是spring bean的配置源。在大多数情况下，这些将是对@Configuration类的引用，但也可以是对XML配置或应该扫描的包的引用。
+
+还可以使用应用程序配置spring应用程序。属性文件。
+
+### 23 . 5 应用程序事件和监听器
+
+除了通常的Spring框架事件，如ContextRefreshedEvent, SpringApplication也会发送一些附加的应用程序事件。
+
+有些事件实际上是在创建ApplicationContext之前触发的，因此您不能将侦听器注册为@Bean。您可以通过SpringApplication.addListeners(…)或SpringApplicationBuilder.listeners(…)方法序注册它们。
+
+如果希望不管应用程序是如何创建的，都自动注册这些侦听器，那么可以添加META-INF/spring.factories文件到您的项目，并使用org.springframework.context.ApplicationListener的key引用您的侦听器。
+
+```properties
+org.springframework.context.ApplicationListener=com.example.project.MyListener
+```
+
+当应用程序运行时，应用程序事件按以下顺序发送：
+
+（1）ApplicationStartingEvent在运行开始时发送，但在任何处理之前发送，除了监听器和初始化器的注册。
+
+（2）当在上下文中使用的环境已知时，但在创建上下文中之前，将发送ApplicationEnvironmentPreparedEvent。
+
+（3）ApplicationPreparedEvent将在启动刷新之前，但在加载bean定义之后发送。
+
+（4）在刷新之后将发送一个ApplicationReadyEvent，并处理任何相关的回调，以指示应用程序已准备好为请求提供服务。
+
+（5）如果启动时出现异常，则发送ApplicationFailedEvent。
+
+应用程序事件使用Spring Framework的事件发布机制发送。此机制的一部分确保在子Context中发布给监听器的事件也在任何父上下文中发布给侦听器。因此，如果您的应用程序使用SpringApplication实例的层次结构，监听器可能会接收同一类型应用程序事件的多个实例。
+
+### 23.6 Web environment
+
+
 
 
 
