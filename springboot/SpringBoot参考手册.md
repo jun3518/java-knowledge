@@ -494,7 +494,7 @@ org.springframework.context.ApplicationListener=com.example.project.MyListener
 
 应用程序事件使用Spring Framework的事件发布机制发送。此机制的一部分确保在子Context中发布给监听器的事件也在任何父上下文中发布给侦听器。因此，如果您的应用程序使用SpringApplication实例的层次结构，监听器可能会接收同一类型应用程序事件的多个实例。
 
-### 23.6 Web environment
+### 23.6 Web环境
 
 
 
