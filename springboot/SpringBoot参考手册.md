@@ -496,9 +496,87 @@ org.springframework.context.ApplicationListener=com.example.project.MyListener
 
 ### 23.6 Web环境
 
+一个SpringApplication将尝试代表您创建正确类型的ApplicationContext。默认情况下，将使用AnnotationConfigApplicationContext或AnnotationConfigEmbeddedWebApplicationContext，这取决于您是否正在开发web应用程序。
 
+用于确定“web环境”的算法相当简单(基于几个类的存在)。如果需要覆盖默认值，可以使用setWebEnvironment(boolean webEnvironment)。
 
+还可以通过调用setApplicationContextClass(…)来完全控制将要使用的ApplicationContext类型。
 
+### 23.7 访问应用程序参数
 
+如果需要访问传递给SpringApplication.run()的应用程序参数，可以注入org.springframework.boot.ApplicationArguments Bean实例。ApplicationArguments接口提供对原始String[]参数以及已解析的选项和非选项参数的访问。
 
+```java
+import org.springframework.boot.*
+import org.springframework.beans.factory.annotation.*
+import org.springframework.stereotype.*
+@Component
+public class MyBean {
+    @Autowired
+    public MyBean(ApplicationArguments args) {
+        boolean debug = args.containsOption("debug");
+        List<String> files = args.getNonOptionArgs();
+        // if run with "--debug logfile.txt" debug=true, files=["logfile.txt"]
+    }
+}
+```
+
+Spring Boot还将向Spring环境注册一个CommandLinePropertySource。这还允许您使用@Value注解注入单个应用程序参数。
+
+### 23.8 使用ApplicationRunner或CommandLineRunner
+
+如果您需要在SpringApplication启动后运行一些特定的代码，您可以实现ApplicationRunner或CommandLineRunner接口。这两个接口都以相同的方式工作，并提供一个单一的run方法，该方法将在SpringApplication.run(…)完成之前调用。
+
+CommandLineRunner接口以简单的字符串数组的形式提供对应用程序参数的访问，而ApplicationRunner使用上面讨论的ApplicationArguments接口。
+
+```java
+import org.springframework.boot.*
+import org.springframework.stereotype.*
+@Component
+public class MyBean implements CommandLineRunner {
+    public void run(String... args) {
+    	// Do something...
+    }
+}
+```
+
+您还可以实现org.springframework.core.Ordered接口或使用org.springframework.core.annotation..Order注解，如果有多个CommandLineRunner或ApplicationRunner bean的定义必须按照特定的顺序调用。
+
+### 23.9 应用程序退出
+
+每个spring应用程序都将向JVM注册一个退出钩子，以确保ApplicationContext在退出时被优雅地关闭。可以使用所有标准的Spring生命周期回调(例如DisposableBean接口或@PreDestroy注解)。
+
+此外，bean可以实现org.springframework.boot.ExitCodeGenerator接口，如果希望在调用SpringApplication.exit()时返回特定的退出代码，则使用ExitCodeGenerator接口。然后可以将此退出代码传递到System.exit()，将其作为状态代码返回。
+
+```java
+@SpringBootApplication
+public class ExitCodeApplication {
+    @Bean
+    public ExitCodeGenerator exitCodeGenerator() {
+    	return new ExitCodeGenerator() {
+            @Override
+            public int getExitCode() {
+                return 42;
+                }
+            };
+        }
+    
+    public static void main(String[] args) {
+        System.exit(SpringApplication
+        .exit(SpringApplication.run(ExitCodeApplication.class, args)));
+    }
+}
+```
+
+此外，ExitCodeGenerator接口可以由异常实现。当遇到这样的异常时，Spring Boot将返回由实现的getExitCode()方法提供的退出代码。
+
+### 23.10 管理功能
+
+可以通过指定spring.application.admin.enabled属性为应用程序启用与管理相关的特性。这将在MBeanServer平台上公开SpringApplicationAdminMXBean。您可以使用此功能远程管理Spring引导应用程序。这对于任何服务包装器实现都是有用的。
+
+如果您想知道应用程序在哪个HTTP端口上运行，请获取带有key local.server.port的属性。
+
+在启用此功能时要小心，因为MBean公开了一个方法来关闭应用程序。
+
+## 24 外部配置
 
