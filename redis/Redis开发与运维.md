@@ -46,7 +46,7 @@ Redis还可以将内存的数据利用快照和日志的形式保存到硬盘上
 
 Redis提供了复制功能，实现了多个相同数据的Redis副本，复制功能是分布式Redis的基础。
 
-![Redis主从复制架构](images\Redis主从复制架构.png)
+![images\Redis主从复制架构.png](images\Redis主从复制架构.png)
 
 ### 1.2.8 高可用和分布式
 
@@ -96,7 +96,7 @@ $ make install
 
 Redis安装之后，src和/usr/local/bin目录下多了几个以redis开头可执行文件，我们称之为Redis Shell，这些可执行文件可以做很多事情，例如可以启动和停止Redis、可以检测和修复Redis的持久化文件，还可以检测Redis的性能。
 
-![Redis可执行文件说明.png](images\Redis可执行文件说明.png)
+![images\Redis可执行文件说明.png](images\Redis可执行文件说明.png)
 
 #### 1.5.2.1 启动Redis
 
