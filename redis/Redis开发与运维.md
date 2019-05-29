@@ -96,7 +96,7 @@ $ make install
 
 Redis安装之后，src和/usr/local/bin目录下多了几个以redis开头可执行文件，我们称之为Redis Shell，这些可执行文件可以做很多事情，例如可以启动和停止Redis、可以检测和修复Redis的持久化文件，还可以检测Redis的性能。
 
-![images\Redis可执行文件说明.png](images\Redis可执行文件说明.png)
+![](images/Redis可执行文件说明.png)
 
 #### 1.5.2.1 启动Redis
 
