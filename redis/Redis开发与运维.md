@@ -46,7 +46,7 @@ Redis还可以将内存的数据利用快照和日志的形式保存到硬盘上
 
 Redis提供了复制功能，实现了多个相同数据的Redis副本，复制功能是分布式Redis的基础。
 
-![images\Redis主从复制架构.png](images\Redis主从复制架构.png)
+![images\Redis主从复制架构.png](images/Redis主从复制架构.png)
 
 ### 1.2.8 高可用和分布式
 
