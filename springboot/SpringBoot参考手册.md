@@ -580,3 +580,61 @@ public class ExitCodeApplication {
 
 ## 24 外部配置
 
+Spring Boot允许您将配置外部化，这样您就可以在不同的环境中使用相同的应用程序代码。您可以使用属性文件、YAML文件、环境变量和命令行参数来具体化配置。属性值可以使用@Value注释直接注入bean，可以通过Spring环境抽象访问，也可以通过@ConfigurationProperties绑定到结构化对象。
+
+Spring Boot使用一种非常特殊的PropertySource顺序，其设计目的是允许合理地覆盖值。属性按以下顺序考虑：
+
+### 24.1 配置随机值
+
+RandomValuePropertySource用于注入随机值(例如，注入秘密或测试用例)。它可以生成整数、长、uuid或字符串等等。
+
+```properties
+my.secret=${random.value}
+my.number=${random.int}
+my.bignumber=${random.long}
+my.uuid=${random.uuid}
+my.number.less.than.ten=${random.int(10)}
+my.number.in.range=${random.int[1024,65536]}
+```
+
+### 24.2 访问命令行属性
+
+默认情况下，SpringApplication将把任何命令行选项参数(以——例如——server.port=9000开始)转换为属性，并将其添加到Spring环境中。如上所述，命令行属性始终优先于其他属性源。
+
+如果不希望将命令行属性添加到环境中，可以使用SpringApplication.setAddCommandLineProperties禁用它们(false)。
+
+### 24.3 应用程序属性文件
+
+SpringApplication将从应用程序加载属性。属性文件位于以下位置，并将其添加到Spring环境中：
+
+（1）当前目录的一个子目录。
+
+（2）当前目录。
+
+（3）类路径/配置包。
+
+（4）根路径。
+
+列表按优先级排序(在列表中较高位置定义的属性覆盖在较低位置定义的属性)。
+
+您还可以使用YAML ('.yml')文件作为'.properties'的替代。
+
+如果你不喜欢application.properties作为配置文件名，您可以通过指定spring.config.name环境属性切换到另一个配置文件名。还可以使用spring.config.location引用显式位置的位置环境属性(以逗号分隔的目录位置或文件路径列表)。
+
+```shell
+java -jar myproject.jar --spring.config.name=myproject
+```
+
+or
+
+```shell
+java -jar myproject.jar --spring.config.location=classpath:/default.properties,classpath:/
+override.properties
+```
+
+Warning
+
+
+
+
+
