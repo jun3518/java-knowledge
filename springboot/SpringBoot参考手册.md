@@ -632,7 +632,136 @@ java -jar myproject.jar --spring.config.location=classpath:/default.properties,c
 override.properties
 ```
 
-Warning
+警告：
+
+spring.config.name和spring.config.location在很早以前就被用来确定必须加载哪些文件，因此必须将它们定义为环境属性(通常是OS env、系统属性或命令行参数)。
+
+如果spring.config.location包含目录(与文件相反)，它们应该以/结尾(并将在加载之前附加由spring.config.name生成的名称，包括特定于概要文件的文件名)。在spring.config.location中指定的文件。位置按原样使用，不支持特定于概要文件的变体，并且将被任何特定于概要文件的属性覆盖。
+
+配置位置以相反的顺序搜索。默认情况下，配置的位置是类路径:/、类路径:/config/、文件:./、文件:./config/。搜索结果的顺序为：
+
+（1）file:./config/
+
+（2）file:./
+
+（3）classpath:/config/
+
+（4） classpath:/
+
+配置自定义配置位置时，除了使用默认位置外，还将使用它们。在默认位置之前搜索自定义位置。例如，如果自定义位置classpath:/ custom-config/，file:./custom-config/已配置，搜索顺序变为:
+
+（1）file:./custom-config/
+
+（2）classpath:custom-config/
+
+（3）file:./config/
+
+（4）file:./
+
+（5）classpath:/config/
+
+（6） classpath:/
+
+这种搜索顺序允许您在一个配置文件中指定默认值，然后在另一个配置文件中选择性地覆盖这些值。您可以在应用程序中为您的应用程序提供默认值。属性(或您在spring.config.name中选择的任何其他基本名称)位于一个默认位置。然后，可以在运行时使用位于自定义位置之一的不同文件覆盖这些默认值。
+
+注：如果使用环境变量而不是系统属性，大多数操作系统不允许使用周期分隔的键名，但是可以使用下划线(例如SPRING_CONFIG_NAME而不是spring.config.name)。
+
+### 24.4 Profile-specific属性
+
+/**除了应用属性文件，特定于概要文件的属性也可以使用命名约定application-{profile}.properties来定义。环境有一组默认概要文件(默认情况下[默认])，如果没有设置活动概要文件(即如果没有显式激活概要文件，则使用application-default.properties)。
+
+特定于Profile-specific属性从与标准应用程序相同的位置application.properties，使用特定于概要文件的文件总是覆盖非特定文件，而不管特定于概要文件是在打包的jar内部还是外部。
+
+如果指定了多个概要文件，则应用“最后胜出”策略。例如，spring.profiles.active指定的概要文件。活动属性是在通过SpringApplication配置这些属性之后添加的因此优先考虑API。
+
+**/
+
+### 24.5 属性中的占位符
+
+应用程序中的application.properties在使用时通过现有Environment进行筛选，以便您可以引用以前定义的值(例如，来自系统属性)。
+
+```properties
+app.name=MyApp
+app.description=${app.name} is a Spring Boot application
+```
+
+### 24.6 使用YAML配置文件替代Properties配置文件
+
+YAML是JSON的一个超集，因此是指定分层配置数据的一种非常方便的格式。当您的类路径上有SnakeYAML库时，SpringApplication类将自动支持YAML作为属性的替代。
+
+#### 24.6.1 加载YAML
+
+Spring框架提供了两个方便的类，可用于加载YAML文档。YamlPropertiesFactoryBean将加载YAML作为属性，而YamlMapFactoryBean将加载YAML作为 Map。
+
+例如：
+
+```yaml
+environments:
+	dev:
+		url: http://dev.bar.com
+		name: Developer Setup
+	prod:
+		url: http://foo.bar.com
+		name: My Cool App
+```
+
+将转化为以下Properties：
+
+```properties
+environments.dev.url=http://dev.bar.com
+environments.dev.name=Developer Setup
+environments.prod.url=http://foo.bar.com
+environments.prod.name=My Cool App
+```
+
+YAML列表用[index] dereferencers表示为属性键，例如这个YAML：
+
+```yaml
+my:
+	servers:
+		- dev.bar.com
+		- foo.bar.com
+```
+
+#### 24.6.2 在Spring环境中将YAML作为属性公开
+
+YamlPropertySourceLoader类可用于在Spring环境中将YAML公开为属性源。这允许您使用熟悉的带有占位符语法的@Value注释来访问YAML属性。
+
+#### 24.6.3 多配置文件YAML文档
+
+您可以使用spring在一个文件中指定多个特定于概要文件的YAML文档。配置文件键，指示何时应用文档。例如：
+
+```yaml
+server:
+	address: 192.168.1.100
+---
+spring:
+    profiles: development
+server:
+	address: 127.0.0.1
+---
+spring:
+	profiles: production
+server:
+	address: 192.168.1.120
+```
+
+在上面的例子中，如果development配置文件处于活动状态，server.address属性将为127.0.0.1。如果没有启用development和productio配置文件，那么属性的值将是192.168.1.100。
+
+如果在应用程序上下文启动时没有显式激活配置文件，则默认配置文件将被激活。在这个YAML中，我们为security.user.password设置了一个值。只有在“默认”配置文件中可用:
+
+```yaml
+server:
+	port: 8000
+---
+spring:
+	profiles: default
+security:
+	user:
+	password: weak
+```
+
+
 
 
 
