@@ -1079,25 +1079,344 @@ Mapping filter: 'hiddenHttpMethodFilter' to: [/*]
 
 ### 26.2 控制台输出
 
+默认的日志配置将在消息写入时将其打印到控制台。默认情况下，ERROR、WARN和INFO级别的消息将被记录。您还可以通过使用--debug标志启动应用程序来启用调试模式。
 
+```shell
+$ java -jar myapp.jar --debug
+```
 
+还可以在application.properties中指定debug=true。
 
+启用调试模式后，将配置一系列核心日志记录器(嵌入式容器、Hibernate和Spring Boot)，以输出更多信息。启用调试模式并不会将应用程序配置为记录所有具有调试级别的消息。
 
+#### 26.2.1 彩色编码输出
 
+如果您的终端支持ANSI，颜色输出将用于帮助可读性。你可以设置spring.output.ansienabled.enabled启用到受支持的值以覆盖自动检测。
 
+颜色编码是使用%clr转换字配置的。例如，在最简单的形式中，转换器将根据日志级别对输出进行着色：
 
+```properties
+%clr(%5p)
+```
 
+日志级别到颜色的映射如下所示：
 
+| 日志级别 | 颜色   |
+| -------- | ------ |
+| FATAL    | Red    |
+| ERROR    | Red    |
+| WARN     | Yellow |
+| INFO     | Green  |
+| DEBUG    | Green  |
+| TRACE    | Green  |
 
+或者，您可以指定应该使用的颜色或样式，将其作为转换的选项提供。例如，将文本设置为黄色：
 
+```properties
+%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){yellow}
+```
 
+支持以下颜色和样式：blue、cyan、faint、green、red、yellow。
 
+### 23.6 文件输出
 
+默认情况下，Spring Boot只会登录到控制台，不会写入日志文件。如果您想在控制台输出之外编写日志文件，则需要设置logging.file或logging.path属性(例如在application.properties中)。
 
+下表显示了如何进行日志记录。属性可以一起使用：
 
+| logging.file | logging.path | 例子     | 描述                                                         |
+| ------------ | ------------ | -------- | ------------------------------------------------------------ |
+| (none)       | (none)       |          | 在控制台输出                                                 |
+| 指定文件     | (none)       | my.log   | 写入指定的日志文件。名称可以是确切的位置或相对于当前目录。   |
+| (none)       | 指定目录     | /var/log | 将spring.log写入指定的目录。名称可以是确切的位置或相对于当前目录。 |
 
+日志文件在达到10mb时将会旋转，与控制台输出一样，默认情况下会记录错误、警告和信息级别的消息。
 
+日志系统在应用程序生命周期的早期初始化，因此在通过@PropertySource注释加载的属性文件中不会找到此类日志属性。
 
+日志属性独立于实际的日志基础设施。因此，特定的配置键(如Logback的logback.configurationFile)。不是由spring Boot管理的。
 
+### 26.4 日志级别
 
+所有受支持的日志系统都可以使用log .level在Spring环境中设置日志记录器级别(例如application.properties)。使用logging.level.*=LEVEL，其中LEVEL是TRACE, DEBUG, INFO, WARN, ERROR, FATAL, OFF中的一个。可以使用log.level.root配置根日志程序。例子application.properties：
+
+```properties
+logging.level.root=WARN
+logging.level.org.springframework.web=DEBUG
+logging.level.org.hibernate=ERROR
+```
+
+### 26.5 自定义日志配置
+
+可以通过在类路径中包含适当的库来激活各种日志系统，并通过在类路径的根目录中或Spring Environment属性logging.config指定的位置中提供适当的配置文件来进一步定制。
+
+您可以使用org.springframework.boot.logging.LoggingSystem系统属性强制Spring Boot使用特定的日志系统。该值应该是LoggingSystem实现的完全限定类名。您还可以使用none值完全禁用Spring Boot的日志配置。
+
+由于日志是在创建ApplicationContext之前初始化的，所以不可能控制来自Spring @Configuration文件中的@PropertySources的日志记录。更改日志系统或完全禁用它的唯一方法是通过系统属性。
+
+根据您的日志系统，将加载以下文件：
+
+| 日志系统                | 自定义                                                       |
+| ----------------------- | ------------------------------------------------------------ |
+| Logback                 | logback-spring.xml, logback-spring.groovy, logback.xml or logback.groovy |
+| Log4j2                  | log4j2-spring.xml or log4j2.xml                              |
+| JDK (Java Util Logging) | logging.properties                                           |
+
+如果可能，我们建议您在日志配置中使用-spring变体(例如logback-spring.xml而不是logback.xml)。如果使用标准配置位置，Spring无法完全控制日志初始化。
+
+Java Util Logging中存在一些已知的类加载问题，这些问题会在从可执行jar运行时引发问题。我们建议你尽可能避免使用它。
+
+为了帮助进行定制，将其他一些属性从Spring环境转移到系统属性：
+
+| Spring环境                        | 系统属性                      | 说明                                                         |
+| --------------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| logging.exception-conversion-word | LOG_EXCEPTION_CONVERSION_WORD | 记录异常时使用的转换字                                       |
+| logging.file                      | LOG_FILE                      | 如果定义，则在默认日志配置中使用                             |
+| logging.path                      | LOG_PATH                      | 如果定义，则在默认日志配置中使用                             |
+| logging.pattern.console           | CONSOLE_LOG_PATTERN           | 要在控制台(stdout)上使用的日志模式。(只支持默认的logback设置。) |
+| logging.pattern.file              | FILE_LOG_PATTERN              | 要在文件中使用的日志模式(如果启用了LOG_FILE)。(只支持默认的logback设置。) |
+| logging.pattern.level             | LOG_LEVEL_PATTERN             | 用于呈现日志级别的格式(默认%5p)。(只支持默认的logback设置。) |
+| PID                               | PID                           | 当前进程ID(如果可能，在尚未定义为OS环境变量时发现)           |
+
+支持的所有日志系统在解析配置文件时都可以参考系统属性。有关示例，请参阅spring-boot.jar中的默认配置。
+
+如果希望在日志属性中使用占位符，应该使用Spring Boot的语法，而不是底层框架的语法。值得注意的是，如果您正在使用Logback，您应该使用：作为属性名称与其默认值之间的分隔符，而不是:-. 。
+
+您可以通过只覆盖LOG_LEVEL_PATTERN(或logging.pattern)，将MDC和其他特别的内容添加到日志行。和Logback水平)。例如，如果您使用log.pattern.level=user:%X{user} %5p如果存在，那么默认日志格式将包含“user”的MDC条目，例如：
+
+```verilog
+2015-09-30 12:30:04.031 user:juergen INFO 22174 --- [ nio-8080-exec-0] demo.Controller
+Handling authenticated request
+```
+
+### 26.6 Logback扩展
+
+Spring Boot包含许多Logback扩展，可以帮助进行高级配置。您可以在您的logback-spring.xml配置文件中使用这些扩展。
+
+您不能在标准的logback .xml配置文件中使用扩展名，因为它加载得太早了。您需要使用logback-spring.xml或定义日志logging.config属性。
+
+#### 26.6.1 特殊Profile配置
+
+\<springProfile>标记允许您根据活动的Spring配置文件选择性地包含或排除配置部分。profile部分在\<configuration>元素的任何位置都受支持。使用name属性指定哪个配置文件接受配置。可以使用逗号分隔的列表指定多个profile：
+
+```xml
+<springProfile name="staging">
+<!-- configuration to be enabled when the "staging" profile is active -->
+</springProfile>
+<springProfile name="dev, staging">
+<!-- configuration to be enabled when the "dev" or "staging" profiles are active -->
+</springProfile>
+<springProfile name="!production">
+<!-- configuration to be enabled when the "production" profile is not active -->
+</springProfile>
+```
+
+#### 26.6.2 环境属性
+
+\<springProperty>标记允许您在Logback中显示Spring环境中的属性。如果您希望从应用程序访问值，这将非常有用。返回配置中的属性文件。标记的工作方式与Logback的标准\<property>标记类似，但是您指定的是属性的源(来自环境)，而不是直接指定值。如果需要将属性存储在本地范围之外的其他地方，可以使用scope属性。如果在环境中没有设置属性时需要回退值，可以使用defaultValue属性。
+
+```xml
+<springProperty scope="context" name="fluentHost" source="myapp.fluentd.host"
+	defaultValue="localhost"/>
+<appender name="FLUENT" class="ch.qos.logback.more.appenders.DataFluentAppender">
+	<remoteHost>${fluentHost}</remoteHost>
+	...
+</appender>
+```
+
+RelaxedPropertyResolver用于访问环境属性。如果使用虚线表示法指定源(my-property-name)，那么将尝试所有轻松的变体(myPropertyName、MY_PROPERTY_NAME等)。
+
+## 27 开发Web应用程序
+
+Spring Boot非常适合web应用程序开发。可以使用嵌入式Tomcat、Jetty或Undertow轻松创建自包含HTTP服务器。大多数web应用程序将使用spring-boot- starter-web模块来快速启动和运行。
+
+### 27.1 Spring Web MVC框架
+
+Spring Web MVC框架(通常简称为Spring MVC)是一个富模型视图控制器Web框架。Spring MVC允许您创建特殊的@Controller或@RestController bean来处理传入的HTTP请求。控制器中的方法使用@RequestMapping注释映射到HTTP。
+
+```java
+@RestController
+@RequestMapping(value="/users")
+public class MyRestController {
+    @RequestMapping(value="/{user}", method=RequestMethod.GET)
+    public User getUser(@PathVariable Long user) {
+    	// ...
+    }
+    @RequestMapping(value="/{user}/customers", method=RequestMethod.GET)
+    List<Customer> getUserCustomers(@PathVariable Long user) {
+   	 	// ...
+    }
+@RequestMapping(value="/{user}", method=RequestMethod.DELETE)
+    public User deleteUser(@PathVariable Long user) {
+    	// ...
+    }
+}
+```
+
+#### 27.1.1 Spring MVC自动配置
+
+Spring Boot为Spring MVC提供了自动配置，可以很好地与大多数应用程序配合使用。
+
+自动配置在Spring的默认值之上添加了以下特性：
+
+（1）包含ContentNegotiatingViewResolver和BeanNameViewResolver bean。
+
+（2）支持提供静态资源，包括对webjar的支持。
+
+（3）Converter、GenericConverter、Formatter bean的自动注册。
+
+（4）支持HttpMessageConverters。
+
+（5）MessageCodesResolver的自动注册。
+
+（6）静态index.html支持。
+
+（7）自定义Favicon支持。
+
+（8）自动使用ConfigurableWebBindingInitializer bean。
+
+如果您想保留Spring Boot MVC特性，并且只想添加额外的MVC配置(interceptors, formatters, view controllers等)，您可以添加自己的@Configuration类，类型为WebMvcConfigurerAdapter，但是不需要@EnableWebMvc。如果希望提供RequestMappingHandlerMapping、RequestMappingHandlerAdapter或ExceptionHandlerExceptionResolver的自定义实例，可以声明一个提供此类组件的WebMvcRegistrationsAdapter实例。
+
+如果您想完全控制Spring MVC，您可以添加自己的@Configuration，并使用@EnableWebMvc进行注释。
+
+#### 27.1.2 HttpMessageConverters
+
+Spring MVC使用HttpMessageConverter接口来转换HTTP请求和响应。合理的默认值是开箱即用的，例如对象可以自动转换为JSON(使用Jackson库)或XML(如果可用，使用Jackson XML扩展，否则使用JAXB)。默认情况下，字符串使用UTF-8编码。
+
+如果需要添加或自定义转换器，可以使用Spring Boot的HttpMessageConverters类
+
+```java
+import org.springframework.boot.autoconfigure.web.HttpMessageConverters;
+import org.springframework.context.annotation.*;
+import org.springframework.http.converter.*;
+@Configuration
+public class MyConfiguration {
+    @Bean
+    public HttpMessageConverters customConverters() {
+        HttpMessageConverter<?> additional = ...
+        HttpMessageConverter<?> another = ...
+        return new HttpMessageConverters(additional, another);
+    }
+}
+```
+
+上下文中出现的任何HttpMessageConverter bean都将添加到转换器列表中。您还可以用这种方式覆盖默认转换器。
+
+#### 27.1.3 自定义JSON序列化器和反序列化器
+
+如果您正在使用Jackson对JSON数据进行序列化和反序列化，您可能希望编写自己的JsonSerializer和JsonDeserializer类。定制序列化器通常通过模块在Jackson中注册，但是Spring Boot提供了另一个@JsonComponent注释，这使得直接注册Spring bean更加容易。
+
+您可以直接在JsonSerializer或JsonDeserializer实现上使用@JsonComponent。您还可以在包含序列化器/反序列化器的类上作为内部类使用它。例如：
+
+```java
+import java.io.*;
+import com.fasterxml.jackson.core.*;
+import com.fasterxml.jackson.databind.*;
+import org.springframework.boot.jackson.*;
+@JsonComponent
+public class Example {
+    public static class Serializer extends JsonSerializer<SomeObject> {
+    	// ...
+    }
+    public static class Deserializer extends JsonDeserializer<SomeObject> {
+    	// ...
+    }
+}
+```
+
+ApplicationContext中的所有@JsonComponent bean都将自动向Jackson注册，由于@JsonComponent是用@Component进行元注释的，所以通常使用的组件扫描规则是适用的。
+
+Spring Boot还提供了JsonObjectSerializer和JsonObjectDeserializer基类，它们在序列化对象时提供了标准Jackson版本的有用替代方法。
+
+#### 27.1.4 MessageCodesResolver
+
+Spring MVC有一个策略，用于生成错误代码，以便从绑定错误中呈现错误消息:如果您设置spring.mvc.message-codes-resolver.format属性PREFIX_ERROR_CODE or POSTFIX_ERROR_CODE（参见DefaultMessageCodesResolver.Format中的枚举），Spring Boot会为您创建一个MessageCodesResolver。
+
+### 27.3 嵌入式servlet容器支持
+
+Spring Boot包含对嵌入式Tomcat、Jetty和Undertow服务器的支持。大多数开发人员将简单地使用适当的启动程序来获得完全配置的实例。默认情况下，嵌入式服务器将侦听端口8080上的HTTP请求。
+
+#### 27.3.1 Servlets, Filters, and Listeners
+
+当使用嵌入式servlet容器时，您可以通过使用Spring bean或扫描servlet组件注册servlet规范中的servlet、filter和所有listener(例如HttpSessionListener)。
+
+##### 将servlet、filter和listener注册为Spring bean
+
+任何Servlet、Filter或Servlet *Listener实例(即Spring bean)都将在嵌入式容器中注册。如果希望引用应用程序中的值，这将特别方便。在配置属性。
+
+默认情况下，如果上下文只包含一个Servlet，它将被映射到/。在多个Servlet bean的情况下，bean名称将用作路径前缀。过滤器将映射到/*。
+
+如果基于约定的映射不够灵活，可以使用ServletRegistrationBean、FilterRegistrationBean和ServletListenerRegistrationBean类来完成控制。
+
+#### 27.3.2 Servlet Context初始化
+
+嵌入式servlet容器不会直接执行servlet 3.0+的javax.servlet.ServletContainerInitializer接口，或Spring的org.springframework.web.WebApplicationInitializer接口。这是一个有意的设计决策，旨在降低设计在war中运行的第三方库破坏Spring引导应用程序的风险。
+
+如果需要在Spring引导应用程序中执行servlet上下文初始化，应该注册一个实现org.springframework.boot.context.embedded.ServletContextInitializer的bean单一的onStartup方法提供了对ServletContext的访问，如果需要，可以很容易地用作现有WebApplicationInitializer的适配器。
+
+##### 扫描Servlets, Filters, and listeners
+
+当使用嵌入式容器时，可以使用@ServletComponentScan启用@WebServlet、@WebFilter和@WebListener注释类的自动注册。
+
+@ServletComponentScan在独立容器中不起作用，而是使用容器的内置发现机制。
+
+#### 27.3.4 自定义嵌入式Servlet容器
+
+可以使用Spring环境属性配置常见的servlet容器设置。通常在应用程序中定义application.properties文件。
+
+常见的服务器设置包括：
+
+（1）网络设置：监听传入HTTP请求的端口(server.port)、要绑定到服务器的接口server.address,等等。
+
+（2）会话设置：session是否持久(server.session.persistence)、session超时(server.session.store-dir)，session数据的位置以及session-cookie配置(server.session.cookie.*)。
+
+（3）错误管理：错误页面的位置(server.error.path)，等等。
+
+（4）SSL
+
+（5）HTTP压缩
+
+##### 编程定制
+
+如果需要以编程方式配置嵌入式servlet容器，可以注册一个实现EmbeddedServletContainerCustomizer接口的Spring bean。EmbeddedServletContainerCustomizer提供对ConfigurableEmbeddedServletContainer的访问，该容器包含许多定制setter方法。
+
+```java
+import org.springframework.boot.context.embedded.*;
+import org.springframework.stereotype.Component;
+@Component
+public class CustomizationBean implements EmbeddedServletContainerCustomizer {
+    @Override
+    public void customize(ConfigurableEmbeddedServletContainer container) {
+    	container.setPort(9000);
+    }
+}
+```
+
+##### 直接自定义ConfigurableEmbeddedServletContainer
+
+如果上面的定制技术太有限，您可以自己注册TomcatEmbeddedServletContainerFactory、JettyEmbeddedServletContainerFactory或UndertowEmbeddedServletContainerFactory bean。
+
+```java
+@Bean
+public EmbeddedServletContainerFactory servletContainer() {
+	TomcatEmbeddedServletContainerFactory factory = new 			
+        TomcatEmbeddedServletContainerFactory();
+	factory.setPort(9000);
+	factory.setSessionTimeout(10, TimeUnit.MINUTES);
+	factory.addErrorPages(new ErrorPage(HttpStatus.NOT_FOUND, "/notfound.html"));
+	return factory;
+}
+```
+
+#### 27.3.5 JSP局限性
+
+当运行使用嵌入式servlet容器(并打包为可执行归档文件)的Spring引导应用程序时，JSP支持存在一些限制。
+
+（1）对于Jetty和Tomcat，如果使用war打包，它应该可以工作。当使用java -jar启动可执行war时，它将工作，并且可以部署到任何标准容器中。使用可执行jar时不支持jsp。
+
+（2）Undertow不支持jsp。
+
+（3）创建自定义error.jsp页面不会覆盖用于错误处理的默认视图，应该使用自定义错误页面。
+
+## 28 安全
 
