@@ -206,6 +206,36 @@ Spring Boot支持基于Java的配置。虽然可以调用SpringApplication.run()
 
 如果您绝对必须使用基于XML的配置，我们建议您仍然从一个@configuration类开始。然后可以使用附加的@ImportResource注释来加载XML配置文件。
 
+```java
+@SpringBootApplication
+@ImportResource("config/beans.xml")
+public class SpringbootReferrence01Application {
+	public static void main(String[] args) {
+		SpringApplication.run(SpringbootReferrence01Application.class, args);
+	}
+}
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+	<bean id="person" class="com.zhxj.Person">
+		<property name="username" value="zhxj"/>
+		<property name="password" value="123456"/>
+		<property name="hobbits">
+			<list>
+				<value>吃饭</value>
+				<value>睡觉</value>
+			</list>
+		</property>
+	</bean>
+</beans>
+```
+
+
+
 ## 16 自动配置
 
 Spring Boot 自动配置尝试根据添加的jar依赖项自动配置Spring应用程序。例如，如果HSQLDB位于您的类路径上，而您还没有手动配置任何数据库连接bean，那么我们将自动配置内存中的数据库。
@@ -468,7 +498,7 @@ public static void main(String[] args) {
 
 还可以使用应用程序配置spring应用程序。属性文件。
 
-### 23 . 5 应用程序事件和监听器
+### 23.5 应用程序事件和监听器
 
 除了通常的Spring框架事件，如ContextRefreshedEvent, SpringApplication也会发送一些附加的应用程序事件。
 
@@ -760,6 +790,310 @@ security:
 	user:
 	password: weak
 ```
+
+#### 24.6.4 YAML的缺点
+
+无法通过@PropertySource注解加载YAML文件。因此，在需要以这种方式加载值的情况下，需要使用属性文件。
+
+### 24.7 类型安全的配置属性
+
+使用@Value(“${property}”)注解注入配置属性有时会很麻烦，特别是当您处理多个属性或者您的数据本质上是分层的时候。Spring Boot提供了另一种处理属性的方法，允许强类型bean管理和验证应用程序的配置。
+
+```java
+package com.example;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+@ConfigurationProperties("foo")
+public class FooProperties {
+    private boolean enabled;
+    private InetAddress remoteAddress;
+    private final Security security = new Security();
+    public boolean isEnabled() { ... }
+    public void setEnabled(boolean enabled) { ... }
+    public InetAddress getRemoteAddress() { ... }
+    public void setRemoteAddress(InetAddress remoteAddress) { ... }
+    public Security getSecurity() { ... }
+    public static class Security {
+        private String username;
+        private String password;
+        private List<String> roles = new ArrayList<>(Collections.singleton("USER"));
+        public String getUsername() { ... }
+        public void setUsername(String username) { ... }
+        public String getPassword() { ... }
+        public void setPassword(String password) { ... }
+        public List<String> getRoles() { ... }
+        public void setRoles(List<String> roles) { ... }
+	}
+}
+```
+
+上面的POJO定义了以下属性：
+
+（1） foo.enabled，默认是false。
+
+（2）foo.remote-address，使用可以从字符串强制的类型。
+
+（3）foo.security.username，使用嵌套的“安全性”，其名称由属性的名称确定。特别是返回类型根本没有使用，而且可能已经使用了SecurityProperties。
+
+（4）foo.security.password。
+
+（5） foo.security.roles，字符串集合。
+
+您还需要列出要在@EnableConfigurationProperties注解中注册的属性类：
+
+```java
+@Configuration
+@EnableConfigurationProperties(FooProperties.class)
+public class MyConfiguration {
+}
+```
+
+当以这种方式注册@ConfigurationProperties bean时，该bean将具有一个常规名称:\<prefix>-\<fqn>，其中\<prefix>是在@ConfigurationProperties注释中指定的环境键前缀，\<fqn>是该bean的完全限定名。如果注释不提供任何前缀，则只使用bean的完全限定名。
+
+即使上面的配置将为FooProperties创建一个常规bean，我们建议@ConfigurationProperties只处理环境，特别是不从上下文注入其他bean。尽管如此，@EnableConfigurationProperties注释也会自动应用到您的项目中，以便使用@ConfigurationProperties注释的任何现有bean都可以从环境中配置。您可以通过确保FooProperties已经是一个bean来简化上面的MyConfiguration。
+
+```java
+@Component
+@ConfigurationProperties(prefix="foo")
+public class FooProperties {
+	// ... see above
+}
+```
+
+这种配置方式在SpringApplication外部YAML配置中特别好用：
+
+```yaml
+# application.yml
+foo:
+	remote-address: 192.168.1.1
+	security:
+		username: foo
+		roles:
+            - USER
+            - ADMIN
+# additional configuration as required
+```
+
+要使用@ConfigurationProperties bean，您可以像注入任何其他bean一样注入它们。
+
+```java
+@Service
+public class MyService {
+	private final FooProperties properties;
+    @Autowired
+    public MyService(FooProperties properties) {
+    	this.properties = properties;
+    }
+    //...
+    @PostConstruct
+    public void openConnection() {
+    	Server server = new Server(this.properties.getRemoteAddress());
+    }
+} 
+```
+
+#### 24.7.1 第三方配置
+
+除了使用@ConfigurationProperties注解类外，还可以在公共@Bean方法上使用该类。当您希望将属性绑定到您无法控制的第三方组件时，这尤其有用。
+
+要从环境属性配置bean，请将@ConfigurationProperties添加到其bean注册：
+
+```java
+@ConfigurationProperties(prefix = "bar")
+@Bean
+public BarComponent barComponent() {
+	...
+}
+```
+
+使用bar前缀定义的任何属性都将以类似于上面的FooProperties示例的方式映射到该BarComponent bean。
+
+#### 27.7.2 松散的绑定
+
+Spring Boot使用一些轻松的规则将环境属性绑定到@ConfigurationProperties bean，因此环境属性名和bean属性名之间不需要精确匹配。有用的常见例子包括虚线分隔(例如上下文路径绑定到contextPath)和大写(例如端口绑定到端口)环境属性。
+
+例如，给定以下@ConfigurationProperties类：
+
+```java
+@ConfigurationProperties(prefix="person")
+public class OwnerProperties {
+    private String firstName;
+    public String getFirstName() {
+    	return this.firstName;
+    }
+    public void setFirstName(String firstName) {
+    	this.firstName = firstName;
+    }
+}
+```
+
+以下属性名称均可使用：
+
+| 属性                | 说明                                                |
+| ------------------- | --------------------------------------------------- |
+| person.firstName    | 标准驼峰语法                                        |
+| person.first-name   | 虚线表示法，建议在.properties和.yml文件中使用。     |
+| person.first_name U | 下划线符号，用于.properties和.yml文件的另一种格式。 |
+| PERSON_FIRST_NAME   | 大写格式。建议在使用系统环境变量时使用。            |
+
+#### 27.7.3 属性转换
+
+当Spring绑定到@ConfigurationProperties bean时，它将尝试强制外部应用程序属性为正确的类型。如果需要自定义类型转换，可以提供一个ConversionService bean(使用bean id ConversionService)或自定义属性编辑器(通过CustomEditorConfigurer bean)或自定义转换器(使用注释为@ConfigurationPropertiesBinding的bean定义)。
+
+#### 27.7.4 @ConfigurationProperties验证
+
+每当使用Spring的@Validated注解对类进行标注时，Spring Boot将尝试验证@ConfigurationProperties类。您可以使用JSR-303javax.validation直接在配置类上使用验证约束注解。只需确保兼容的JSR-303实现位于类路径上，然后向字段添加约束注解。
+
+```java
+@ConfigurationProperties(prefix="foo")
+@Validated
+public class FooProperties {
+    @NotNull
+    private InetAddress remoteAddress;
+    // ... getters and setters
+}
+```
+
+为了验证嵌套属性的值，必须将关联字段标注为@Valid以触发其验证。例如，基于上面的FooProperties例子：
+
+```java
+@ConfigurationProperties(prefix="connection")
+@Validated
+public class FooProperties {
+    @NotNull
+    private InetAddress remoteAddress;
+    @Valid
+    private final Security security = new Security();
+    // ... getters and setters
+    public static class Security {
+        @NotEmpty
+        public String username;
+        // ... getters and setters
+    }
+}
+```
+
+#### @ConfigurationProperties VS @Value
+
+@Value是一个核心容器特性，它不提供与类型安全配置属性相同的特性。下表总结了@ConfigurationProperties和@Value支持的特性：
+
+| 特点       | @ConfigurationProperties | @Value |
+| ---------- | ------------------------ | ------ |
+| 松散的绑定 | Yes                      | No     |
+|            | Yes                      | No     |
+| SpEL       | No                       | Yes    |
+
+如果您为自己的组件定义了一组配置键，我们建议您将它们分组到一个带有@ConfigurationProperties注解的POJO中。还请注意，由于@Value不支持松散绑定，如果您需要使用环境变量提供值，那么它不是一个很好的选择。
+
+注：虽然可以在@Value中编写SpEL表达式，但是这些表达式并不从应用程序属性文件中处理。
+
+## 25 Profiles
+
+Spring Profiles提供了一种方法来隔离应用程序配置的各个部分，并使其仅在某些环境中可用。任何@Component或@Configuration都可以用@Profile标记，以限制加载它的时间。
+
+```java
+@Configuration
+@Profile("production")
+public class ProductionConfiguration {
+	// ...
+}
+```
+
+在正常的Spring方法中，您可以使用spring.profiles.active环境属性，以指定哪些profiles是有效的。您可以使用任何常用方法指定该属性，例如可以将其包含在application.properties中
+
+```yaml
+spring.profiles.active=dev,hsqldb
+```
+
+或者在命令行上使用--spring.profile .active=dev,hsqldb指定。
+
+### 25.1 添加可用的Profiles
+
+spring.profiles.active属性遵循与其他属性相同的顺序规则，最高的PropertySource将获胜。这意味着您可以在application.properties中指定活动profiles。然后使用命令行开关替换它们。
+
+有时，将特定于profile的属性添加到活动profile中而不是替换它们是有用的。spring.profiles.include 属性可用于无条件地添加活动profile。SpringApplication入口点还有一个用于设置其他概要文件的Java API(例如，在那些被spring.profiles.active属性):参见setAdditionalProfiles()方法。
+
+例如，当使用--spring.profiles运行具有以下属性的应用程序时。proddb和prodmq概要文件也将被激活：
+
+```yaml
+---
+my.property: fromyamlfile
+---
+spring.profiles: prod
+spring.profiles.include:
+    - proddb
+    - prodmq
+```
+
+记住那个spring.profiles属性可以在YAML文档中定义profiles属性，以确定何时将此特定文档包含在配置中。
+
+### 25.2 以编程方式设置profiles
+
+您可以通过调用SpringApplication以编程方式设置活动profiles。在应用程序运行之前执行SpringApplication.setAdditionalProfiles(…)。还可以使用Spring的ConfigurableEnvironment接口激活配置文件。
+
+## 26 日志
+
+Spring Boot对所有内部日志使用Commons Logging，但保留底层日志实现。为 Java Util Logging，Log4J2 和Logback提供了默认配置。在每种情况下，日志记录器都预先配置为使用控制台输出，同时还提供可选的文件输出。
+
+默认情况下，如果使用启动程序，将使用Logback进行日志记录。还包括适当的Logback路由，以确保使用Java Util Logging、Commons Logging、Log4J或SLF4J的依赖库都能正确工作。
+
+Java有很多可用的日志框架。如果上面的列表看起来令人困惑，不要担心。一般情况下，您不需要更改日志依赖项，并且Spring引导默认值将正常工作。
+
+### 26.1 日志格式
+
+Spring Boot的默认日志输出如下所示：
+
+```properties
+2014-03-05 10:57:51.112 INFO 45469 --- [ main] org.apache.catalina.core.StandardEngine :
+Starting Servlet Engine: Apache Tomcat/7.0.52
+2014-03-05 10:57:51.253 INFO 45469 --- [ost-startStop-1] o.a.c.c.C.[Tomcat].[localhost].[/] :
+Initializing Spring embedded WebApplicationContext
+2014-03-05 10:57:51.253 INFO 45469 --- [ost-startStop-1] o.s.web.context.ContextLoader :
+Root WebApplicationContext: initialization completed in 1358 ms
+2014-03-05 10:57:51.698 INFO 45469 --- [ost-startStop-1] o.s.b.c.e.ServletRegistrationBean :
+Mapping servlet: 'dispatcherServlet' to [/]
+2014-03-05 10:57:51.702 INFO 45469 --- [ost-startStop-1] o.s.b.c.embedded.FilterRegistrationBean :
+Mapping filter: 'hiddenHttpMethodFilter' to: [/*]
+```
+
+下面是输出项：
+
+（1）日期和时间 - 毫秒精度和易于排序。
+
+（2）日志级别 - ERROR、WARN、INFO、DEBUG、TRACE。
+
+（3）Process ID（进程id）。
+
+（4）--- 分隔符，以区分实际日志消息的开始。
+
+（5）用方括号括起来的线程名(可能为控制台输出而被截断)。
+
+（6）日志的名字 - 这通常是源类名(通常缩写)。
+
+（7）日志消息。
+
+注：Logback没有致命级别(它被映射为ERROR)。
+
+### 26.2 控制台输出
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
