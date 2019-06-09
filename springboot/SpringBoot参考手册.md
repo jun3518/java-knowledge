@@ -1420,3 +1420,26 @@ public EmbeddedServletContainerFactory servletContainer() {
 
 ## 28 安全
 
+如果类路径上有Spring Security，那么web应用程序默认情况下将是安全的，所有HTTP端点上都有基本的身份验证。要向web应用程序添加方法级安全性，还可以使用所需的设置添加@EnableGlobalMethodSecurity。
+
+默认的AuthenticationManager只有一个用户(用户名和随机密码，在应用程序启动时打印在INFO级别)。
+
+如果对日志配置进行了微调，请确保org.springframework.boot.autoconfigure。安全类别设置为日志级别为INFO，否则将不会打印默认密码。
+
+您可以通过提供security.user.password来更改密码。这个属性和其他有用的属性通过SecurityProperties(属性前缀“security”)外部化。
+
+默认的安全配置在SecurityAutoConfiguration和从其中导入的类中实现(SpringBootWebSecurityConfiguration用于web安全，AuthenticationManagerConfiguration用于身份验证配置，这在非web应用程序中也是相关的)。要完全关闭默认的web应用程序安全性配置，您可以添加一个带有@EnableWebSecurity的bean(这不会禁用身份验证管理器配置或执行器安全性)。要定制它，您通常使用WebSecurityConfigurerAdapter类型的外部属性和bean(例如，添加基于表单的登录)。
+
+如果添加@EnableWebSecurity并禁用执行器安全性，除非添加自定义WebSecurityConfigurerAdapter，否则整个应用程序将获得默认的基于表单的登录。
+
+要关闭身份验证管理器配置，还可以添加AuthenticationManager类型的bean，或者通过将AuthenticationManagerBuilder自动拖放到@Configuration类中的一个方法中来配置全局AuthenticationManager。在Spring引导示例中有几个安全的应用程序，可以帮助您开始使用常见的用例。
+
+web应用程序中最基本的特性是：
+
+（1）具有内存存储和单个用户的AuthenticationManager bean。
+
+（2）常见静态资源位置(/css/\*\**、/js/\*\*、/images/\*\*、/ webjars/\*\*和**/favicon.ico)的忽略路径(不安全)。
+
+（3）所有其他端点的HTTP基本安全性。
+
+（4）发布到Spring的ApplicationEventPublisher的安全事件(成功和失败的身份验证和访问被拒绝)。
