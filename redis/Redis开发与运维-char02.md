@@ -326,3 +326,29 @@ Redis的lpush+brpop命令组合即可实现阻塞队列，生产者客户端使�
 
 ### 2.6.1 命令
 
+![](images/有序集合命令的时间复杂度.png)
+
+### 2.6.2 内部编码
+
+有序集合类型的内部编码有两种：
+
+（1）ziplist（压缩列表）：当有序集合的元素个数小于zset-max-ziplist-entries配置（默认128个），同时每个元素的值都小于zset-max-ziplist-value配置（默认64字节）时，Redis会用ziplist来作为有序集合的内部实现，ziplist可以有效减少内存的使用。
+
+（2）skiplist（跳跃表）：当ziplist条件不满足时，有序集合会使用skiplist作为内部实现，因为此时ziplist的读写效率会下降。
+
+### 2.6.3 使用场景
+
+有序集合比较典型的使用场景就是排行榜系统。例如视频网站需要对用户上传的视频做排行榜，榜单的维度可能是多个方面的：按照时间、按照播放数量、按照获得的赞数。
+
+## 2.7 键管理
+
+### 2.7.1 单个键管理
+
+1、键重命名：rename key newkey
+
+为了防止被强行rename，Redis提供了renamenx命令，确保只有newKey不存在时候才被覆盖。
+
+2、随机返回一个键：randomkey
+
+3、键过期：expire、ttl、expireat、pexpire、pexpireat、pttl、persist
+
