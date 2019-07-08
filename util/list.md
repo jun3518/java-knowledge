@@ -17,11 +17,11 @@ private List<Integer> getLinkedList(int size) {
 }
 // 获取ArrayList
 private List<Integer> getArrayList(int size) {
-    List<Integer> linkedList = new ArrayList<>(size);
+    List<Integer> arrayList = new ArrayList<>(size);
     for (int i = 0; i < size; i++) {
-        linkedList.add(i);
+        arrayList.add(i);
     }
-    return linkedList;
+    return arrayList;
 }
 ```
 
