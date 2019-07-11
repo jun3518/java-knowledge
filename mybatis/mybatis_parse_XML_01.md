@@ -96,5 +96,10 @@ configuration.setAutoMappingBehavior(AutoMappingBehavior.valueOf(props.getProper
     configuration.setConfigurationFactory(resolveClass(props.getProperty("configurationFactory")));
 ```
 
+
+
 ### \<properties>
 
+对于\<properties>元素的解析，如果指定了属性resource或url（两者只能选择其一），Mybatis会将其封装到Properties对象中，resource或url中定义的内容会覆盖\<property>元素的内容（即resource或url定义的内容优先级高于\<property>属性）。
+
+然后将其存入到Configuration对象的variables属性中。
