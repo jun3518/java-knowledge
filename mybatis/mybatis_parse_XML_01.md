@@ -100,6 +100,25 @@ configuration.setAutoMappingBehavior(AutoMappingBehavior.valueOf(props.getProper
 
 ### \<properties>
 
-对于\<properties>元素的解析，如果指定了属性resource或url（两者只能选择其一），Mybatis会将其封装到Properties对象中，resource或url中定义的内容会覆盖\<property>元素的内容（即resource或url定义的内容优先级高于\<property>属性）。
+如果指定了属性resource或url（两者只能选择其一），Mybatis会将其封装到Properties对象中，resource或url中定义的内容会覆盖\<property>元素的内容（即resource或url定义的内容优先级高于\<property>属性）。
 
 然后将其存入到Configuration对象的variables属性中。
+
+### \<typeAliases>
+
+1、如果指定了\<package>子元素，那么会将获取包下的类，然后获取类相应的Class对象和Class对象的simpleName的全小写字符串。
+
+2、如果指定了\<typeAlias>子元素，那么获取该子元素定义的type的Class对象和alias属性值。
+
+然后将其注册到org.apache.ibatis.type.TypeAliasRegistry#TYPE_ALIASESMap中。
+
+注：在org.apache.ibatis.type.TypeAliasRegistry类的构造方法中，注册了基本数据类型及包装类和常用的JDK类的别名。
+
+### \<plugins>
+
+Mybatis会解析\<plugins>的子元素\<plugin>，并将其实例化后存入到org.apache.ibatis.session.Configuration#interceptorChain集合中。
+
+注：插件可以令Mybatis具有扩展性，后面将会重点讲解。
+
+### \<environments>
+
