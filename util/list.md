@@ -1,6 +1,6 @@
 ### 问题抛出
 
-对于Java开发中的List实现类：ArrayList和LinkedList，可能你知道在频繁查询的时候使用ArrayList；在频繁增删的时候用LinkedList；不知道什么场景时用ArrayList。
+对于Java开发中的List实现类：ArrayList和LinkedList，可能你知道在频繁查询的时候使用ArrayList；在频繁增删的时候用LinkedList。
 
 不过你真的会使用ArrayList和LinkedList吗？
 
