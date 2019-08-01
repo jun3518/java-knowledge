@@ -195,3 +195,141 @@ private void configurationElement(XNode context) {
 
 #### 解析\<cache>节点
 
+Mybatis拥有非常强大的二级缓存功能，该功能可以非常方便地进行配置，Mybatis默认情况下没有开启二级缓存，如果要为某个命名空间（namespace）开启二级缓存功能，需要在响应的映射配置文件中添加\<cache>节点，还可以通过配置\<cache>节点的相关属性，为二级缓存配置响应的特性。
+
+XMLMapperBuilder.cacheElement()方法主要负责解析\<cache>节点，其具体实现如下：
+
+```java
+private void cacheElement(XNode context) throws Exception {
+    if (context != null) {
+        // 获取<cache>节点的type属性，默认值是PERPETUAL，对应的类型是org.apache.ibatis.cache.impl.PerpetualCache
+        String type = context.getStringAttribute("type", "PERPETUAL");
+        // 查找type属性对应的Cache接口实现
+        Class<? extends Cache> typeClass = typeAliasRegistry.resolveAlias(type);
+        // 获取<cache>节点的eviction属性，默认值是LRU
+        String eviction = context.getStringAttribute("eviction", "LRU");
+        // 解析eviction属性指定的Cache装饰器类型
+        Class<? extends Cache> evictionClass = typeAliasRegistry.resolveAlias(eviction);
+        // 获取<cache>节点的flushInterval属性，默认值是null
+        Long flushInterval = context.getLongAttribute("flushInterval");
+        // 获取<cache>节点的size属性，默认值是null
+        Integer size = context.getIntAttribute("size");
+        // 获取<cache>节点的readOnly属性，默认值是false
+        boolean readWrite = !context.getBooleanAttribute("readOnly", false);
+        // 获取<cache>节点的blocking属性，默认值是false
+        boolean blocking = context.getBooleanAttribute("blocking", false);
+        // 获取<cache>节点下的子节点，将用于初始化二级缓存
+        Properties props = context.getChildrenAsProperties();
+        // 通过MapperBuilderAssistant创建Cache对象，并添加到Configuration.caches集合中保存
+        builderAssistant.useNewCache(typeClass, evictionClass, flushInterval, size, readWrite, blocking, props);
+    }
+}
+```
+
+MapperBuilderAssistant是一个辅助类，其useNewCache()方法负责创建Cache对象，并将其添加到Configuration.caches集合中保存。Configuration中的caches字段是org.apache.ibatis.session.Configuration.StrictMap\<Cache>类型的字段，它记录Cache的id（默认是映射文件的namespace）与Cache对象（二级缓存）之间的对应关系。
+
+CacheBuilder是Cache的建造者，CacheBuilder中各个字段的含义如下：
+
+```java
+public class CacheBuilder {
+    // Cache对象的唯一标识，一般情况下对应映射文件中的配置namespace
+  	private String id;
+    // Cache接口的真正实现类，默认值是PerpetualCache
+  	private Class<? extends Cache> implementation;
+    // 装饰器集合，默认只包含LruCache.class
+  	private List<Class<? extends Cache>> decorators;
+    // Cache的大小
+  	private Integer size;
+    // 清理时间周期
+  	private Long clearInterval;
+    // 是否可读写
+  	private boolean readWrite;
+    // 其他配置信息
+  	private Properties properties;
+    // 是否阻塞
+  	private boolean blocking;
+}
+```
+
+#### 解析\<cache-ref>节点
+
+如果希望多个namespace共用一个二级缓存，即同一个Cache对象，则可以使用\<cache-ref>节点进行配置。
+
+XMLMapperBuilder.cacheRefElement()方法负责解析\<cache-ref>节点，并将解析结果存到Configuration.cacheRefMap集合，该集合是HashMap\<String, String>类型，其中key是\<cache-ref>节点所在的namespace，value是\<cache-ref>节点的namespace属性指定的namespace。即：前者共用后者的Cache对象。
+
+![](../images/ref-cache共用Cache图.png)
+
+```java
+private void cacheRefElement(XNode context) {
+    if (context != null) {
+        // 将当前的Mapper配置文件的namespace与被引用的Cache所在的namespace之间的对应关系，记录到Configuration.cacheRefMap集合中
+        configuration.addCacheRef(builderAssistant.getCurrentNamespace(), context.getStringAttribute("namespace"));
+     	// 创建CacheRefResolver对象
+        CacheRefResolver cacheRefResolver = new CacheRefResolver(builderAssistant, context.getStringAttribute("namespace"));
+        try {
+            // 解析Cache引用，该过程主要是设置MapperBuilderAssistant中的currentCache和unresolveCacheRef();
+            cacheRefResolver.resolveCacheRef();
+        } catch (IncompleteElementException e) {
+            // 如果解析过程出现异常，则添加到Configuration.incompleteCacheRefs集合，稍后再解析
+            configuration.addIncompleteCacheRef(cacheRefResolver);
+        }
+    }
+}
+```
+
+CacheRefResolver是一个简单的Cache引用解析器，其中封装了被引用的namespace以及当前XMLMapperBuilder对应的MapperBuilderAssistant对象。CacheRefResolver.resolveCacheRef()方法会调用MapperBuilderAssistant.useCacheRef()方法。在MapperBuilderAssistant.useCacheRef()方法中会通过namespace查找被引用的Cache对象。
+
+```java
+public Cache useCacheRef(String namespace) {
+    // 省略try...catch()代码
+    // 标识未成功解析Cache引用
+    unresolvedCacheRef = true;
+    // 获取namespace对应的Cache对象
+    Cache cache = configuration.getCache(namespace);
+    if (cache == null) {
+        throw new IncompleteElementException("No cache for namespace '" + namespace + "' could be found.");
+    }
+    // 记录当前命名空间使用的Cache对象
+    currentCache = cache;
+    // 标识已成功解析Cache引用
+    unresolvedCacheRef = false;
+    return cache;
+}
+```
+
+注：Configuration字段是incompleteCacheRefs集合，它是LinkedList\<CacheRefResolver>类型，其中记录了当前解析出现异常的CacheRefResolver对象。
+
+#### 解析\<resultMap>节点
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
