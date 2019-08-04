@@ -301,9 +301,146 @@ public Cache useCacheRef(String namespace) {
 
 #### 解析\<resultMap>节点
 
+select语句查询得到的结果集时一张二维表。在JDBC编程中，为了将结果集中的数据映射成对象，需要写代码从结果集中获取数据，然后封装成对应的对象并设置对象之间的关系，这些都是重复性代码。为了减少这些重复的代码，Mybatis使用\<resultMap>节点定义了结果集与结果对象（POJO对象）之间的映射规则，\<resultMap>节点可以满足绝大部分的映射需求，从而减少开发人员的重复性劳动，提高开发效率。
 
+每个ResultMapping对象记录结果集中的一列与JavaBean中一个属性之间的映射关系。\<resultMap>节点除了\<discriminator>子节点的其他子节点，都会被解析成对应的ResultMapping对象。ResultMapping中的核心字段含义如下：
 
+```java
+public class ResultMapping {
+	// Configuration对象
+    private Configuration configuration;
+    // 对应节点的property属性，表示的是与该列进行映射的属性
+    private String property;
+    // 对应节点的column属性，表示的是从数据库中得到的列名或是列名的别名
+    private String column;
+    // 对应节点的javaType属性，表示的是一个JavaBean的完全限定名，或一个类型别名
+    private Class<?> javaType;
+    // 对应节点的jdbcType属性，表示的是进行映射的列的JDBC类型
+    private JdbcType jdbcType;
+    // 对应节点的typeHandler属性，表示的是类型处理器，它会覆盖默认的类型处理器
+    private TypeHandler<?> typeHandler;
+    //对应节点的resultMap属性，该属性通过id引用另一个<resultMap>节点定义，它负责将结果集中的一部分列映	 //射成其他关联的结果对象。这样就可以通过join方式进行关联查询，然后直接映射成多个对象，并同时设置这些对	   //象之间的组合关系
+    private String nestedResultMapId;
+    // 对应节点的select属性，该属性通过id引用了另一个<select>节点定义，它会把指定的类的值传入select属性指定的select语句中作为参数进行查询。使用select属性可能会导致N+1问题
+    private String nestedQueryId;
+    // 对应节点的notNullColumn属性拆分后的结果
+    private Set<String> notNullColumns;
+    // 对应节点的columnPrefix属性
+    private String columnPrefix;
+    // 处理后的标志，标志共两个：id和constructor
+    private List<ResultFlag> flags;
+    // 对应节点的column属性拆分后生成的结果，composites.size()>0会使column为null
+    private List<ResultMapping> composites;
+    // 对应节点的resultSet属性
+    private String resultSet;
+    // 对应节点的foreignColumn属性
+    private String foreignColumn;
+    // 是否延迟加载，对应节点的fetchType属性
+    private boolean lazy;
+}
+```
 
+每个\<resultMap>节点都会被解析成一个ResultMap对象。其中每个节点所定义的映射关系，则使用ResultMapping对象表示。
+
+![](../images/ResultMapping和ResultMap关系.png)
+
+ResultMap中各个字段的含义如下：
+
+```java
+public class ResultMap {
+    //<resultMap>节点的id属性
+    private String id;
+    // <resultMap>的type属性
+    private Class<?> type;
+    // 记录了除<discriminator>节点之外的其他映射关系（即ResultMapping对象集合）
+    private List<ResultMapping> resultMappings;
+    // 记录了映射关系这能够带有ID标志的映射关系，如<id>节点和<constrcuctor>节点的<idArg>子节点
+    private List<ResultMapping> idResultMappings;
+    // 记录了映射关系中带有Constructor标志的映射关系，如<constrcuctor>所有子元素
+    private List<ResultMapping> constructorResultMappings;
+    // 记录了映射关系中不带有Constructor标志的映射关系
+    private List<ResultMapping> propertyResultMappings;
+    // 记录所有映射关系中设计的column属性的集合
+    private Set<String> mappedColumns;
+    // 鉴别器，对应<discriminator>节点
+    private Discriminator discriminator;
+    // 是否含有嵌套结果映射，如果某个映射关系中存在resultMap属性，且不存在resultSet属性，则为true
+    private boolean hasNestedResultMaps;
+    // 是否含有嵌套查询，如果某个属性映射存在select属性，则为true
+    private boolean hasNestedQueries;
+    // 是否开启自动映射
+    private Boolean autoMapping;
+}
+```
+
+在XMLMapperBuilder中通过resultMapElements()方法解析映射配置文件中的全部\<resultMap>节点，该方法会循环调用resultMapElement()方法处理每个\<resultMap>节点。
+
+```java
+resultMapElements(context.evalNodes("/mapper/resultMap"));
+// -------------
+private void resultMapElements(List<XNode> list) throws Exception {
+    for (XNode resultMapNode : list) {
+        resultMapElement(resultMapNode);
+    }
+  }
+```
+
+resultMapElement()方法的具体实现如下：
+
+```java
+private ResultMap resultMapElement(XNode resultMapNode, List<ResultMapping> additionalResultMappings) throws Exception {
+    ErrorContext.instance().activity("processing " + resultMapNode.getValueBasedIdentifier());
+    // 获取<resultMap>的id属性，默认值会拼装成所有父节点的id或value或Property属性值
+    String id = resultMapNode.getStringAttribute("id",
+        resultMapNode.getValueBasedIdentifier());
+    // 获取<resultMap>节点的type属性，表示结果集被映射成type指定类型的对象，注意其默认值：type > 	
+    //ofType > resultType > javaType
+    String type = resultMapNode.getStringAttribute("type",
+        resultMapNode.getStringAttribute("ofType",
+            resultMapNode.getStringAttribute("resultType",
+                resultMapNode.getStringAttribute("javaType"))));
+    // 获取<resultMap>节点的extendd属性，该属性指定了该<resultMap>节点的继承关系
+    String extend = resultMapNode.getStringAttribute("extends");
+    // 读取<resultMap>节点的autoMapping属性，将该属性设置为true，则启动自动映射功能，即自动查找与列名
+    //同名的属性名，并调用setter方法。而设置为false后，则需要在<resultMap>节点内明确注明映射关系才会调
+    //用对应的setter方法
+    Boolean autoMapping = resultMapNode.getBooleanAttribute("autoMapping");
+    // ...
+    ResultMapResolver resultMapResolver = new ResultMapResolver(builderAssistant, id, typeClass, extend, discriminator, resultMappings, autoMapping);
+    try {
+        // 创建ResultMap对象，并添加到Configuration.resultMaps集合中，该集合是strictMap类型
+      return resultMapResolver.resolve();
+    } catch (IncompleteElementException  e) {
+      configuration.addIncompleteResultMap(resultMapResolver);
+      throw e;
+    }
+  }
+```
+
+#### 解析\<sql>节点
+
+在映射配置文件中，可以使用\<sql>节点定义可重用的SQL语句片段。当需要重用\<sql>节点中鸿定义的SQL语句片段时，只需要使用\<include>节点引入相应的SQL片段即可。这样在编写SQL语句以及维护这些SQL语句时都会比较方便。
+
+```java
+private void sqlElement(List<XNode> list, String requiredDatabaseId) throws Exception {
+    // 遍历<sql>节点
+    for (XNode context : list) {
+        // 获取databaseId属性
+        String databaseId = context.getStringAttribute("databaseId");
+        // 获取id属性
+        String id = context.getStringAttribute("id");
+        // 为id添加命名空间
+        id = builderAssistant.applyCurrentNamespace(id, false);
+        if (databaseIdMatchesCurrent(id, databaseId, requiredDatabaseId)) {
+            // 记录到XMLMapperBuilder.sqlFragments(Map<String,XNode>类型)中保存，在记录到
+            //XMLMapperBuilder的构造函数中，可以看到该字段指向了Configuration.sqlFragments集合
+            sqlFragments.put(id, context);
+        }
+    }
+}
+```
+
+### 3.1.5 XMLStatementBuilder
 
 
 
