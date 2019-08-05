@@ -442,7 +442,153 @@ private void sqlElement(List<XNode> list, String requiredDatabaseId) throws Exce
 
 ### 3.1.5 XMLStatementBuilder
 
+SQL杰思娜主要用于定义SQL语句，它们不再由XMLMapperBuilder进行解析，而是由XMLStatementBuilder负责进行解析。
 
+Mybatis使用SqlSource接口表示映射文件或注解中定义的SQL语句，但它表示的SQL语句是不能直接被数据库执行的，因为其中可能含有动态SQL语句相关的节点或是占位符等需要解析的元素。
+
+SqlSource接口的定义如下：
+
+```java
+public interface SqlSource {
+  	// getBoundSql()方法会根据映射文件或注解描述的SQL语句，以及传入的参数，返回可执行的SQL
+  	BoundSql getBoundSql(Object parameterObject);
+}
+```
+
+Mybatis使用MappedStatement表示映射配置文件中定义的SQL节点，MappedStatement包含了这些节点的很多属性，其中比较重要的字段如下：
+
+```java
+public final class MappedStatement {
+	// 节点中的id属性（包括命名空间前缀）
+    private String resource;
+    // SqlSource对象，对应一条SQL语句
+    private SqlSource sqlSource;
+    // SQL的类型，INSERT、UPDATE、DELETE、SELECT或PLUSH
+    private SqlCommandType sqlCommandType;
+    //...
+}
+```
+
+XMLStatementBuilder.parseStatementNode()方法是解析SQL节点的入口函数，其具体实现如下：
+
+获取SQL节点的id以及databaseId属性，若其databaseId属性值与当前使用的数据库不匹配，则不加载该SQL节点；若存在相同id且databaseId不为空的SQL节点，则不再加载该SQL节点。
+
+获取SQL节点的多种属性值，如：fetchSize、timeout、parameterType、resultMap、resultType等等。
+
+根据SQL节点的名称决定其SqlCommandType
+
+```java
+String nodeName = context.getNode().getNodeName();
+    SqlCommandType sqlCommandType = SqlCommandType.valueOf(nodeName.toUpperCase(Locale.ENGLISH));
+```
+
+在解析SQL语句之前，先处理其中的\<include>节点：
+
+```java
+XMLIncludeTransformer includeParser = new XMLIncludeTransformer(configuration, 
+                                                                builderAssistant);
+includeParser.applyIncludes(context.getNode());
+```
+
+处理\<selectKey>节点：
+
+```java
+processSelectKeyNodes(id, parameterTypeClass, langDriver);
+```
+
+完成SQL节点的解析....，该部分是parseStatementNode()方法的核心。
+
+#### 解析\<include>节点
+
+在解析SQL节点之前，首先通过XMLIncludeTransformer解析SQL语句中的\<include>节点，该过程会将\<include>节点替换成\<sql>节点中定义的SQL片段，并将其中的“${xxx}”占位符替换成真实的参数，该解析过程是在XMLIncludeTransformer.applyIncludes()方法中实现的：
+
+```java
+public void applyIncludes(Node source) {
+    // Huoqu mybatis-config.xml中<Properties>节点下定义的变量集合
+    Properties variablesContext = new Properties();
+    Properties configurationVariables = configuration.getVariables();
+    if (configurationVariables != null) {
+        variablesContext.putAll(configurationVariables);
+    }
+    // 处理<include>子节点
+    applyIncludes(source, variablesContext);
+}
+```
+
+![](../images/applyIncludes()方法的递归调用.png)
+
+\<include>节点和\<sql>节点可以配合使用、多层嵌套，实现更加复杂的sql片段的重用。
+
+#### 解析\<selectKey>节点
+
+XMLStatementBuilder.processSelectKeyNodes(String, Class<?>, LanguageDriver)方法负责解析SQL节点中的\<selectKey>子节点：
+
+```java
+private void processSelectKeyNodes(String id, Class<?> parameterTypeClass, LanguageDriver langDriver) {
+    // 获取全部的<selectKey>节点
+    List<XNode> selectKeyNodes = context.evalNodes("selectKey");
+    // 解析<selectKey>节点
+    if (configuration.getDatabaseId() != null) {
+        parseSelectKeyNodes(id, selectKeyNodes, parameterTypeClass, langDriver, configuration.getDatabaseId());
+    }
+    parseSelectKeyNodes(id, selectKeyNodes, parameterTypeClass, langDriver, null);
+    // 移除<selectKey>节点
+    removeSelectKeyNodes(selectKeyNodes);
+}
+```
+
+在XMLStatementBuilder.parseSelectKeyNodes()方法中，首先读取\<selectKey>节点的一系列属性，然后调用LanguageDriver.createSqlSource()方法创建对应的SqlSource对象，最后创建MappedStatement对象，并添加到Configuration.mappedStatements集合中保存。
+
+在Mybatis中，默认的LanguageDriver实现类org.apache.ibatis.scripting.xmltags.XMLLanguageDriver。
+
+在XMLLanguageDriver.createSqlSource()方法中会创建XMLScriptBuilder对象并调用XMLScriptBuilder.parseScriptNode()方法创建SqlSource对象：
+
+```java
+public SqlSource parseScriptNode() {
+    // 首先判断当前节点是否有动态SQL，动态SQL会包含占位符或是动态SQL的相关节点
+    List<SqlNode> contents = parseDynamicTags(context);
+    // SqlNode集合包装成一MixedSqlNode
+    MixedSqlNode rootSqlNode = new MixedSqlNode(contents);
+    SqlSource sqlSource = null;
+    if (isDynamic) {
+        // 根据是否是动态SQL，创建相应的SqlSource对象
+        sqlSource = new DynamicSqlSource(configuration, rootSqlNode);
+    } else {
+        sqlSource = new RawSqlSource(configuration, rootSqlNode, parameterType);
+    }
+    return sqlSource;
+}
+```
+
+在XMLLanguageDriver.parseDynamicTags()方法中，会遍历\<selectKey>下的每个节点，如果包含任何标签点，则认为是动态SQL语句；Eugene文本节点中含有“${}”占位符，也认为其为动态SQL语句。
+
+SqlNode接口的每个市县都对应于不同的动态SQL节点类型。
+
+如果\<selectKey>节点下存在其他标签，则会调用nodeHandlers()方法根据标签名称创建对应的NodeHandler对象：
+
+```java
+NodeHandler nodeHandlers(String nodeName) {
+    Map<String, NodeHandler> map = new HashMap<String, NodeHandler>();
+    map.put("trim", new TrimHandler());
+    map.put("where", new WhereHandler());
+    map.put("set", new SetHandler());
+    map.put("foreach", new ForEachHandler());
+    map.put("if", new IfHandler());
+    map.put("choose", new ChooseHandler());
+    map.put("when", new IfHandler());
+    map.put("otherwise", new OtherwiseHandler());
+    map.put("bind", new BindHandler());
+    return map.get(nodeName);
+}
+```
+
+NodeHandler接口实现类会根据不同的动态SQL标签进行解析，生成对应的SqlNode对象，并将其添加到contents集合中。
+
+#### 解析SQL节点
+
+经过上述两个解析过程之后，\<include>节点和\<selectKey>节点已经被解析并删除掉了。XMLStatementBuilder.parseStatementNode()方法剩余的操作就是解析SQL节点。
+
+### 3.1.6 绑定Mapper接口
 
 
 
