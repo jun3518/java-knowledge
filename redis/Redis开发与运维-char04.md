@@ -203,3 +203,112 @@ Background append only file rewriting scheduled
 
 ### 5.2.5 重启加载
 
+![](./images/Redis加载持久化文件.png)
+
+流程说明：
+
+（1）AOF持久化开启且存在AOF文件时，优先加载AOF文件，打印如下日志：
+
+```shell
+DB loaded from append only file: 5.841 seconds
+```
+
+（2）AOF关闭或者AOF文件不存在时，加载RDB文件，打印如下日志：
+
+```shell
+DB loaded from disk: 5.586 seconds
+```
+
+（3）加载AOF/RDB文件成功后，Redis启动成功。
+
+（4）AOF/RDB文件存在错误时，Redis启动失败并打印错误信息。
+
+### 5.2.6 文件校验
+
+加载损坏的AOF文件时会拒绝启动，并打印如下日志：
+
+```shell
+Bad file format reading the append only file: make a backup of your AOF file,
+then use ./redis-check-aof --fix <filename>
+```
+
+对于错误格式的AOF文件，先进行备份，然后采用redis-check-aof--fix命令进行修复，修复后使用diff-u对比数据的差异，找出丢失的数据，有些可以人工修改补全。
+
+AOF文件可能存在结尾不完整的情况，比如机器突然掉电导致AOF尾部文件命令写入不全。Redis为我们提供了aof-load-truncated配置来兼容这种情况，默认开启。加载AOF时，当遇到此问题时会忽略并继续启动，同时打印如下警告日志：
+
+```shell
+# !!! Warning: short read while loading the AOF file !!!
+# !!! Truncating the AOF at offset 397856725 !!!
+# AOF loaded anyway because aof-load-truncated is enabled
+```
+
+## 5.3 问题定位与优化
+
+### 5.3.1 fork操作
+
+当Redis做RDB或AOF重写时，一个必不可少的操作就是执行fork操作创建子进程，对于大多数操作系统来说fork是个重量级错误。虽然fork创建的子进程不需要拷贝父进程的物理内存空间，但是会复制父进程的空间内存页表。
+
+正常情况下fork耗时应该是每GB消耗20毫秒左右。可以在info stats统计中查latest_fork_usec指标获取最近一次fork操作耗时，单位微秒。
+
+如何改善fork操作的耗时？
+
+（1）优先使用物理机或者高效支持fork操作的虚拟化技术，避免使用Xen。
+
+（2）控制Redis实例最大可用内存，fork耗时跟内存量成正比，线上建议每个Redis实例内存控制在10GB以内。
+
+（3）合理配置Linux内存分配策略，避免物理内存不足导致fork失败。
+
+（4）降低fork操作的频率，如适度放宽AOF自动触发时机，避免不必要的全量复制等。
+
+### 5.3.2 子进程开销优化
+
+1、CPU
+
+Redis是CPU密集型服务，不要做绑定单核CPU操作。由于子进程非常消耗CPU，会和父进程产生单核资源竞争。
+
+不要和其他CPU密集型服务部署在一起，造成CPU过度竞争。
+
+如果部署多个Redis实例，尽量保证同一时刻只有一个子进程执行重写工作。
+
+2、内存
+
+子进程通过fork操作产生，占用内存大小等同于父进程，理论上需要两倍的内存来完成持久化操作，但Linux有写时复制机制（copy-on-write）。父子进程会共享相同的物理内存页，当父进程处理写请求时会把要修改的页创建副本，而子进程在fork操作过程中共享整个父进程内存快照。
+
+内存优化：
+
+（1）同CPU优化一样，如果部署多个Redis实例，尽量保证同一时刻只有一个子进程在工作。
+
+（2）避免在大量写入时做子进程重写操作，这样将导致父进程维护大量页副本，造成内存消耗。
+
+3、硬盘
+
+（1）不要和其他高硬盘负载的服务部署在一起。
+
+（2）AOF重写时会消耗大量硬盘IO，可以开启配置no-appendfsync-on-rewrite，默认关闭。表示在AOF重写期间不做fsync操作。
+
+（3）对于单机配置多个Redis实例的情况，可以配置不同实例分盘存储AOF文件，分摊硬盘写入压力。
+
+### 5.3.3 AOF追加阻塞
+
+当开启AOF持久化时，常用的同步硬盘的策略是everysec，用于平衡性能和数据安全性。对于这种方式，Redis使用另一条线程每秒执行fsync同步硬盘。当系统硬盘资源繁忙时，会造成Redis主线程阻塞。
+
+![](./images/使用everysec做刷盘策略的流程.png)
+
+阻塞流程分析：
+
+（1）主线程负责写入AOF缓冲区。
+
+（2）AOF线程负责每秒执行一次同步磁盘操作，并记录最近一次同步时间。
+
+（3）主线程负责对比上次AOF同步时间：
+
+​	1）如果距上次同步成功时间在2秒内，主线程直接返回。
+
+	2）如果距上次同步成功时间超过2秒，主线程将会阻塞，直到同步操作完成。
+
+通过对AOF阻塞流程可以发现两个问题：
+
+（1）everysec配置最多可能丢失2秒数据，不是1秒。
+
+（2）如果系统fsync缓慢，将会导致Redis主线程阻塞影响效率。
+
