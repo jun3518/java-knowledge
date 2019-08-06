@@ -590,6 +590,75 @@ NodeHandler接口实现类会根据不同的动态SQL标签进行解析，生成
 
 ### 3.1.6 绑定Mapper接口
 
+每个映射配置文件的命名空间可以绑定一个Mapper接口，并注册到MapperRegistry中。在XMLMapperBuilder.bindMapperForNamespace()方法中，完成了映射配置文件对应的Mapper接口的绑定。
+
+```java
+private void bindMapperForNamespace() {
+    // 获取映射配置文件的命名空间
+    String namespace = builderAssistant.getCurrentNamespace();
+    if (namespace != null) {
+        // 解析命名空间对应的类型
+        Class<?> boundType = boundType = Resources.classForName(namespace);
+        if (boundType != null) {
+            // 追加namespace前缀，并添加到Configuration.loadedResources集合中保存
+            if (!configuration.hasMapper(boundType)) {
+                configuration.addLoadedResource("namespace:" + namespace);
+                // 调用MapperRegistry.addMapper()方法，注册boundType接口
+                configuration.addMapper(boundType);
+            }
+        }
+    }
+}
+```
+
+在MapperRegistry.addMapper()方法时，该方法还会创建MapperAnnotationBuilder，并调用MapperAnnotationBuilder.parse()方法解析Mapper接口中的注册信息：
+
+```java
+public void parse() {
+    String resource = type.toString();
+    // 检测是否已经加载过该接口
+    if (!configuration.isResourceLoaded(resource)) {
+        // 检测是否加载过对应的映射配置文件，如果未加载，则创建XMLMapperBuilder对象解析对应的映射文件,
+        //该过程就是映射配置文件解析过程
+        loadXmlResource();
+        configuration.addLoadedResource(resource);
+        assistant.setCurrentNamespace(type.getName());
+        // 解析@CacheNamespace注解
+        parseCache();
+        // 解析@CacheNamespaceRef注解
+        parseCacheRef();
+        // 获取接口中定义的全部方法
+        Method[] methods = type.getMethods();
+        for (Method method : methods) {
+            try {
+                // issue #237
+                if (!method.isBridge()) {
+                    // 解析@SelectKey、@ResultMap等注解，并创建MappedStatement对象
+                    parseStatement(method);
+                }
+            } catch (IncompleteElementException e) {
+                // 如果解析过程出现IncompleteElementException异常，可能是引用了未解析的注解，这里
+                // 将出现异常的方法添加到Configuration.incompleteMethods集合中暂存，该集合是
+                // LinkedList<MethodResolver>类型
+                configuration.addIncompleteMethod(new MethodResolver(this, method));
+            }
+        }
+    }
+    // 遍历Configuration.incompleteMethods集合中记录的未解析的方法，并重新进行解析
+    parsePendingMethods();
+}
+```
+
+### 3.1.7 处理incomplete*集合
+
+XMLMapperBuilder.configurationElement()方法解析映射配置文件时，是按照从文件头到文件尾的顺序解析的，但是有时候在解析一个节点时，会引用定义在该节点之后的、还未解析的节点，这就会导致解析失败并抛出IncompleteElementException。
+
+根据抛出异常的节点不同，Mybatis会创建不同的*Resolver对象，并添加到Configuration的不同incomplete*集合中。如解析Mapper接口中的方法出现异常时，会创建MethodResolver对象，并将其追加到Configuration.incompleteMethods集合中暂存。
+
+在XMLMapperBuilder.parse()方法中可以看到，每次执行完相应节点的解析，都会再次进行执行解析该节点的异常解析。如果还是无法解析，则会忽略该节点。
+
+## 3.2 SqlNode&SqlSource
+
 
 
 
