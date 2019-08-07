@@ -659,15 +659,263 @@ XMLMapperBuilder.configurationElement()方法解析映射配置文件时，是�
 
 ## 3.2 SqlNode&SqlSource
 
+映射配置文件中定义的SQL节点会被解析成MappedStatement对象，其中的SQL语句会被解析成SqlSource对象，SQL语句中定义的动态SQL节点、文本节点等，则由SqlNode接口的相应实现表示。
 
+```java
+public interface SqlSource {
+	// 通过解析得到BoundSql对象，其中封装了包含“?”占位符的SQL语句，以及绑定的实参
+    BoundSql getBoundSql(Object parameterObject);
+}
+```
 
+![](../images/SqlSource的实现类.png)
 
+DynamicSqlSource负责处理动态SQL语句，RawSqlSource负责处理静态语句，两者最终都会将处理后的SQL语句封装成StaticSqlSource返回。DynamicSqlSource与StaticSqlSource的主要区别是：StaticSqlSource中级联的SQL语句中可能含有"?"占位符，但是可以直接提交给数据库执行；DynamicSqlSource中封装的SQL语句还需要进行一系列的解析，才会最终形成数据库可以执行的SQL语句。
 
+### 3.2.1 组合模式
 
+组合模式是将对象组合成树形结构，以表示“部分-整体”的层次结构（一般是树形结构），用户可以像处理一个简单对象一样来处理一个复杂对象，从而使得调用者无须了解复杂元素的内部结构。
 
+![](../images/组合模式的结构图.png)
 
+组合模式中的角色如下：
 
+（1）抽象组件（Component）：Component接口定义了树形结构中所有类的公共行为，如这里的operation()方法。一般情况下，其中还会定义一些用于管理子组件的方法，如这里的add()、remove()、getChild()方法。
 
+（2）树叶（Leaf）：Leaf在树形结构中表示叶节点对象，叶节点没有子节点。
+
+（3）树枝（Composite）：定义有子组件的那些组件的行为。该角色用于管理子组件，并通过operation()方法调用其管理的子组件的相关操作。
+
+（4）调用者（Client）：通过Component接口操作整个树形结构。
+
+组合模式主要有两点好处，首先组合模式可以帮助调用者屏蔽对象的复杂性。对于调用者来说，整个树形结构与使用单个Component对象没有任何区别。即：调用者不必关心自己处理的是单个Component对象还是整个树形结构，这样就可以将调用者与复杂对象进行解耦。另外使用了组合模式之后，可以通过增加树中节点的方式，添加新的Component对象，从而实现功能上的扩展，这符合“开放-封闭”原则，也可以简化 日后的维护工作。	
+
+组合模式也会引入一些问题：有些场景下程序希望一个组合结构中只能有某些特定的组件，此时就很难直接通过组件类型进行限制（因为都是Component接口的实现类），这就必须在运行时进行类型检测。而且在递归程序中定位问题也是一件比较复杂的事情。
+
+Mybatis在处理动态SQL节点时，应用到了组合设计模式。Mybatis会将动态SQL节点解析成对应的SqlNode实现，并形成属性结构。
+
+### 3.2.3 DynamicContext
+
+DynamicContext主要用于记录解析动态SQL语句之后产生的SQL语句片段，可以认为它是一个用于记录动态SQL语句解析结果的容器。
+
+```java
+public class DynamicContext {
+    // 参数上下文
+	private final ContextMap bindings;
+    // 在SqlNode解析动态SQL时，会将解析后的SQL语句片段添加到该属性中保存，最终拼凑处一条完整的SQL语句
+  	private final StringBuilder sqlBuilder = new StringBuilder();
+}
+```
+
+ContextMap是DynamicContext的一个内部类，它实现了HashMap，并重写了get()方法：
+
+```java
+static class ContextMap extends HashMap<String, Object> {
+    private static final long serialVersionUID = 2977601501966151582L;
+    // 将用户传入的参数封装成了MetaObject对象
+    private MetaObject parameterMetaObject;
+    public ContextMap(MetaObject parameterMetaObject) {
+        this.parameterMetaObject = parameterMetaObject;
+    }
+    // 重写了get()方法
+    @Override
+    public Object get(Object key) {
+        String strKey = (String) key;
+        // 如果ContextMap中已经包含了该key，则直接返回
+        if (super.containsKey(strKey)) {
+            return super.get(strKey);
+        }
+        if (parameterMetaObject != null) {
+            //从运行时参数中查找对应属性
+            return parameterMetaObject.getValue(strKey);
+        }
+        return null;
+    }
+}
+```
+
+DynamicContext的构造方法会初始化bindings集合，第二个参数Object parameterObject，它是运行时用户传入的参数，其中包含了后续用于替换“#{}”占位符的实参。DynamicContext构造方法的具体实现如下：
+
+```java
+public DynamicContext(Configuration configuration, Object parameterObject) {
+    if (parameterObject != null && !(parameterObject instanceof Map)) {
+        // 对于非Map类型的参数，会创建对应的MetaObject对象，并封装成ContextMap对象
+        MetaObject metaObject = configuration.newMetaObject(parameterObject);
+        // 初始化bindings集合
+        bindings = new ContextMap(metaObject);
+    } else {
+        bindings = new ContextMap(null);
+    }
+    // 将PARAMETER_OBJECT_KEY -> parameterObject这一对应关系添加到bindings集合中，其中将
+    //PARAMETER_OBJECT_KEY的值是"_parameter"，在有的SqlNode实现中直接使用了该字面值
+    bindings.put(PARAMETER_OBJECT_KEY, parameterObject);
+    bindings.put(DATABASE_ID_KEY, configuration.getDatabaseId());
+}
+```
+
+DynamicContext中常用的两个方法是appendSql()方法和getSql()方法：
+
+```java
+// 追加SQL片段
+public void appendSql(String sql) {
+    sqlBuilder.append(sql);
+    sqlBuilder.append(" ");
+}
+// 获取解析后的、完整的SQL语句
+public String getSql() {
+    return sqlBuilder.toString().trim();
+}
+```
+
+### 3.2.4 SqlNode
+
+SqlNode接口的定义如下：
+
+```java
+public interface SqlNode {
+	// apply()是SqlNode接口中定义的唯一方法，该方法会根据用户传入的实参，参数解析该SqlNode所积累的动态
+    //SQL节点，并调用DynamicContext.appendSql()方法将解析后的SQL片段追加到
+    //DynamicContext.sqlBuilder中保存,当SQL节点下的所有SqlNode完成解析后，就可以从DynamicContext
+    //中获取一条动态生成的、完整的SQL语句
+    boolean apply(DynamicContext context);
+}
+```
+
+SqlNode接口有多个实现类，每个实现类对应一个动态SQL节点。按照组合模式的角色来划分，SqlNode扮演了抽象组件的角色，MixedSqlNode扮演了树枝节点的角色，TextSqlNode节点扮演了树叶节点的角色。
+
+#### StaticTextSqlNode&MixedSqlNode
+
+StaticTextSqlNode中使用text字段（String类型）记录了对应的非动态SQL语句节点，其apply()方法直接将text字段追加到DynamicContext.sqlBuilder字段中。
+
+MixedSqlNode中使用contents字段（List\<SqlNode>类型）记录其子节点对应的SqlNode对象集合，其apply()方法会循环调用contents集合中所有SqlNode对象的apply()方法。
+
+#### TextSqlNode
+
+TextSqlNode表示的是包含“${}”占位符的动态SQL节点。TextSqlNode.apply()方法会使用GenericTokenParser解析"${}"占位符，并直接替换成用户给定的实际参数值。具体实现如下：
+
+#### IfSqlNode
+
+IfSqlNode对应的动态SQL节点时\<if>节点，其中定义的字段的含义如下：
+
+```java
+public class IfSqlNode implements SqlNode {
+    // ExpressionEvaluator对象用于解析<if>节点的test表达式的值
+    private ExpressionEvaluator evaluator;
+    // 记录了<if>节点中的test表达式
+    private String test;
+    // 记录了<if>节点的子节点
+    private SqlNode contents;
+}
+```
+
+IfSqlNode.apply()方法首先会通过ExpressionEvaluator.evaluateBoolean()方法检测其test表达式是否为true，然后根据test表达式的结果，决定是否执行其子节点的apply()方法。
+
+```java
+public boolean evaluateBoolean(String expression, Object parameterObject) {
+    // 首先通过OGNL解析表达式的值
+    Object value = OgnlCache.getValue(expression, parameterObject);
+    // 处理Boolean类型
+    if (value instanceof Boolean) {
+        return (Boolean) value;
+    }
+    // 处理数字类型
+    if (value instanceof Number) {
+        return !new BigDecimal(String.valueOf(value)).equals(BigDecimal.ZERO);
+    }
+    return value != null;
+}
+```
+
+#### TrimSqlNode&WhereSqlNode&SetSqlNode
+
+TrimSqlNode会根据子节点的解析结果，添加或删除响应的前缀或后缀。
+
+```java
+public class TrimSqlNode implements SqlNode {
+	// 该<trim>节点的子节点
+    private SqlNode contents;
+    // 记录了前缀字符串（为<trim>节点包裹的SQL语句添加的前缀）
+    private String prefix;
+     // 记录了后缀字符串（为<trim>节点包裹的SQL语句添加的后缀）
+    private String suffix;
+    // 如果<trim>节点包裹的SQL语句是空语句（经常出现在if判断为否的情况下），删除指定的前缀，如where
+    private List<String> prefixesToOverride;
+    // 如果<trim>节点包裹的SQL语句是空语句（经常出现在if判断为否的情况下），删除指定的后缀，如逗号
+    private List<String> suffixesToOverride;
+}
+```
+
+在TrimSqlNode的构造函数中，会调用parseOverrides()方法对参数prefixesToOverride（对应\<trim>节点的prefixOverrides属性）和参数suffixesToOverride（对应\<trim>节点的suffixOverrides属性）进行解析，并初始化prefixesToOverride和suffixesToOverride：
+
+```java
+private static List<String> parseOverrides(String overrides) {
+    if (overrides != null) {
+        // 按照"|"进行分割
+        final StringTokenizer parser = new StringTokenizer(overrides, "|", false);
+        final List<String> list = new ArrayList<String>(parser.countTokens());
+        while (parser.hasMoreTokens()) {
+            // 转换为大写，并添加到集合中
+            list.add(parser.nextToken().toUpperCase(Locale.ENGLISH));
+        }
+        return list;
+    }
+    return Collections.emptyList();
+}
+```
+
+TrimSqlNode.apply()方法：
+
+```java
+public boolean apply(DynamicContext context) {
+    // 创建FilteredDynamicContext对象，其中封装了DynamicContext
+    FilteredDynamicContext filteredDynamicContext = new FilteredDynamicContext(context);
+    // 调用子节点的apply()方法进行解析
+    boolean result = contents.apply(filteredDynamicContext);
+    // 使用FilteredDynamicContext.applyAll()方法处理前缀和后缀
+    filteredDynamicContext.applyAll();
+    return result;
+}
+```
+
+处理前缀和后缀的主要逻辑是在FilteredDynamicContext中实现的，它继承了DynamicContext，同时也是DynamicContext的代理类。FilteredDynamicContext除了将对应方法调用委托给其中封装的DynamicContext对象，还提供了处理前缀和后缀的applyAll()方法。
+
+```java
+private static class FilteredDynamicContext extends DynamicContext {
+    // 底层封装的DynamicContext对象
+    private DynamicContext delegate;
+    // 是否已经处理过前缀和后缀，初始值都为false
+    private boolean prefixApplied;
+    private boolean suffixApplied;
+    //sqlBuilder是DynamicContext的私有成员属性，用于记录子节点解析后的结果，
+    //FilteredDynamicContext.appendSql()方法会向该字段添加解析结果，而不是调用
+    //delegate.appendSql()方法
+    private StringBuilder sqlBuffer;
+}
+```
+
+FilteredDynamicContext.applyAll()：
+
+```java
+public void applyAll() {
+    //获取子节点解析后的结果，并全部转换为大写
+    sqlBuffer = new StringBuilder(sqlBuffer.toString().trim());
+    String trimmedUppercaseSql = sqlBuffer.toString().toUpperCase(Locale.ENGLISH);
+    if (trimmedUppercaseSql.length() > 0) {
+        // 处理前缀
+        applyPrefix(sqlBuffer, trimmedUppercaseSql);
+        // 处理后缀
+        applySuffix(sqlBuffer, trimmedUppercaseSql);
+    }
+    //将解析后的结果添加到delegate中
+    delegate.appendSql(sqlBuffer.toString());
+}
+```
+
+WhereSqlNode和SetSqlNode都继承了TrimSqlNode，其中WhereSqlNode指定了prefix字段为“WHERE”，prefixesToOverride集合中的项为“AND”和“OR”，suffix字段和suffixesToOverride集合为null。即：\<where>节点解析后的SQL语句判断如果以“AND”或“OR”开头，则将开头的“AND”或“OR”删除，之后再将“WHERE”关键字添加到SQL片段开始位置，从而得到该\<where>节点最终生成的SQL片段。
+
+SetSqlNode指定了prefix字段为“SET”，suffixesToOverride集合中的项只有","，suffix字段和prefixesToOverride集合为null。即：\<set>节点解析后的SQL语句片段如果以“,”结尾，则将结尾处的","删除掉，之后再将"SET"关键字添加到SQL片段的开始位置，从而得到该\<set>节点最终生成的SQL片段。
+
+#### ForeachSqlNode
 
 
 
