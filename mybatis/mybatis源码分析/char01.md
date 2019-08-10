@@ -917,6 +917,71 @@ SetSqlNode指定了prefix字段为“SET”，suffixesToOverride集合中的项�
 
 #### ForeachSqlNode
 
+在动态SQL语句中构建IN条件语句的时候，通常需要对一个集合进行迭代，Mybatis提供了\<foreach>标签实现该功能。在使用\<foreach>标签迭代集合时，不仅可以使用集合的元素和索引值，还可以在循环开始之前或结束之前添加指定的字符串，也允许在迭代的过程中添加指定的分隔符。
+
+\<foreach>标签对应的SqlNode实现是ForeachSqlNode，ForeachSqlNode中各个字段含义和功能：
+
+```java
+public class ForEachSqlNode implements SqlNode {
+    // 用于判断循环的终止条件，ForEachSqlNode构造方法中会创建该对象
+    private final ExpressionEvaluator evaluator;
+    // 迭代的集合表达式
+    private final String collectionExpression;
+    // 记录了该ForEachSqlNode节点的子节点
+    private final SqlNode contents;
+    // 在循环开始前要添加的字符串
+    private final String open;
+    // 在循环结束后要添加的字符串
+    private final String close;
+    // 循环过程中，每项之前的分隔符
+    private final String separator;
+    // index是当前迭代的次数，item的值是本次迭代的元素。若迭代集合是Map，则index是键，item是值
+    private final String item;
+    private final String index;
+    private final Configuration configuration;
+}
+```
+
+在ForEachSqlNode中有两个内部类：FilteredDynamicContext和PrefixedContext，它们都继承了DynamicContext，同时也都是DynamicContext的代理类。
+
+```java
+private class PrefixedContext extends DynamicContext {
+    // 底层封装的DynamicContext对象
+    private final DynamicContext delegate;
+    // 指定的前缀
+    private final String prefix;
+    // 是否已经处理过前缀
+    private boolean prefixApplied;
+}
+```
+
+PrefixedContext.appendSql()方法会首先追加指定的prefix前缀到delegate中，然后再将SQL语句片段追加到delegate中：
+
+```java
+public void appendSql(String sql) {
+    // 判断是否需要追加前缀
+    if (!prefixApplied && sql != null && sql.trim().length() > 0) {
+        // 追加前缀
+        delegate.appendSql(prefix);
+        // 表示已经处理过前缀
+        prefixApplied = true;
+    }
+    // 追加sql片段
+    delegate.appendSql(sql);
+}
+```
+
+PrefixedContext中其他方法都是通过调用delegate的对应方法实现的。
+
+```java
+private static class FilteredDynamicContext extends DynamicContext {
+    private final DynamicContext delegate;
+    private final int index;
+    private final String itemIndex;
+    private final String item;
+}
+```
+
 
 
 
