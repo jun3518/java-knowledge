@@ -975,12 +975,56 @@ PrefixedContext中其他方法都是通过调用delegate的对应方法实现的
 
 ```java
 private static class FilteredDynamicContext extends DynamicContext {
+    // DynamicContext对象
     private final DynamicContext delegate;
+    // 对应集合项的index，参见对ForeachSqlNode.index字段的介绍
     private final int index;
+    // 对应集合项的item，参见对ForeachSqlNode.item字段的介绍
     private final String itemIndex;
+    // 对应集合项在集合中的索引位置
     private final String item;
 }
 ```
+
+FilteredDynamicContext.appendSql()方法会将"#{item}"占位符转换成"#{\__frch_item_1}"的格式，其中"\_\_frch\_"是固定的前缀，"item"与处理前的占位符一样，未发生改变，1则是FilteredDynamicContext产生的单调低增值；还会降"#{itemIndex}"占位符转换成"#{\_\_frch_itemIndex_1}"的格式，其中各个部分的含义同上。该方法的具体实现如下：
+
+```java
+public void appendSql(String sql) {
+    // 创建GenericTokenParser解析器
+    GenericTokenParser parser = new GenericTokenParser("#{", "}", new TokenHandler() {
+        @Override
+        public String handleToken(String content) {
+            // 对item进行处理
+            String newContent = content.replaceFirst("^\\s*" + item + "(?![^.,:\\s])", 
+                                                     itemizeItem(item, index));
+            if (itemIndex != null && newContent.equals(content)) {
+                // 对itemIndex进行处理
+                newContent = content.replaceFirst("^\\s*" + itemIndex + "(?![^.,:\\s])", 
+                                                  itemizeItem(itemIndex, index));
+            }
+            return new StringBuilder("#{").append(newContent).append("}").toString();
+        }
+    });
+	// 将解析后的SQL语句片段追加到delegate中保存
+    delegate.appendSql(parser.parse(sql));
+}
+```
+
+回到ForeachSqlNode.apply()方法的分析，该方法的主要步骤如下：
+
+（1）解析集合表达式，获取对应的实际参数。
+
+（2）在循环开始之前，添加open字段指定的字符串。
+
+（3）开始遍历集合，根据遍历的位置和是否指定分隔符，用PrefixedContext封装DynamicContext。
+
+（4）调用applyIndex()方法将index添加到DynamicContext.bindings集合中，供后续解析使用。
+
+（5）调用applyItem()方法将item添加到DynamicContext.bindings集合中，供后续解析使用。
+
+（6）转换子节点中的"#{}"占位符，此步骤会将PrefixedContext封装成FilterDynamicContext，在追加子节点转换结果时，就会使用FilterDynamicContext.apply()方法"#{}"占位符转换成"#{__frch\_...}"的格式。
+
+（7）循环结束后，调用DynamicContext.appendSql()方法添加close指定的字符串。
 
 
 
