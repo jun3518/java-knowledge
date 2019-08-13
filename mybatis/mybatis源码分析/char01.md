@@ -917,6 +917,115 @@ SetSqlNode指定了prefix字段为“SET”，suffixesToOverride集合中的项�
 
 #### ForeachSqlNode
 
+在动态SQL语句中构建IN条件语句的时候，通常需要对一个集合进行迭代，Mybatis提供了\<foreach>标签实现该功能。在使用\<foreach>标签迭代集合时，不仅可以使用集合的元素和索引值，还可以在循环开始之前或结束之前添加指定的字符串，也允许在迭代的过程中添加指定的分隔符。
+
+\<foreach>标签对应的SqlNode实现是ForeachSqlNode，ForeachSqlNode中各个字段含义和功能：
+
+```java
+public class ForEachSqlNode implements SqlNode {
+    // 用于判断循环的终止条件，ForEachSqlNode构造方法中会创建该对象
+    private final ExpressionEvaluator evaluator;
+    // 迭代的集合表达式
+    private final String collectionExpression;
+    // 记录了该ForEachSqlNode节点的子节点
+    private final SqlNode contents;
+    // 在循环开始前要添加的字符串
+    private final String open;
+    // 在循环结束后要添加的字符串
+    private final String close;
+    // 循环过程中，每项之前的分隔符
+    private final String separator;
+    // index是当前迭代的次数，item的值是本次迭代的元素。若迭代集合是Map，则index是键，item是值
+    private final String item;
+    private final String index;
+    private final Configuration configuration;
+}
+```
+
+在ForEachSqlNode中有两个内部类：FilteredDynamicContext和PrefixedContext，它们都继承了DynamicContext，同时也都是DynamicContext的代理类。
+
+```java
+private class PrefixedContext extends DynamicContext {
+    // 底层封装的DynamicContext对象
+    private final DynamicContext delegate;
+    // 指定的前缀
+    private final String prefix;
+    // 是否已经处理过前缀
+    private boolean prefixApplied;
+}
+```
+
+PrefixedContext.appendSql()方法会首先追加指定的prefix前缀到delegate中，然后再将SQL语句片段追加到delegate中：
+
+```java
+public void appendSql(String sql) {
+    // 判断是否需要追加前缀
+    if (!prefixApplied && sql != null && sql.trim().length() > 0) {
+        // 追加前缀
+        delegate.appendSql(prefix);
+        // 表示已经处理过前缀
+        prefixApplied = true;
+    }
+    // 追加sql片段
+    delegate.appendSql(sql);
+}
+```
+
+PrefixedContext中其他方法都是通过调用delegate的对应方法实现的。
+
+```java
+private static class FilteredDynamicContext extends DynamicContext {
+    // DynamicContext对象
+    private final DynamicContext delegate;
+    // 对应集合项的index，参见对ForeachSqlNode.index字段的介绍
+    private final int index;
+    // 对应集合项的item，参见对ForeachSqlNode.item字段的介绍
+    private final String itemIndex;
+    // 对应集合项在集合中的索引位置
+    private final String item;
+}
+```
+
+FilteredDynamicContext.appendSql()方法会将"#{item}"占位符转换成"#{\__frch_item_1}"的格式，其中"\_\_frch\_"是固定的前缀，"item"与处理前的占位符一样，未发生改变，1则是FilteredDynamicContext产生的单调低增值；还会降"#{itemIndex}"占位符转换成"#{\_\_frch_itemIndex_1}"的格式，其中各个部分的含义同上。该方法的具体实现如下：
+
+```java
+public void appendSql(String sql) {
+    // 创建GenericTokenParser解析器
+    GenericTokenParser parser = new GenericTokenParser("#{", "}", new TokenHandler() {
+        @Override
+        public String handleToken(String content) {
+            // 对item进行处理
+            String newContent = content.replaceFirst("^\\s*" + item + "(?![^.,:\\s])", 
+                                                     itemizeItem(item, index));
+            if (itemIndex != null && newContent.equals(content)) {
+                // 对itemIndex进行处理
+                newContent = content.replaceFirst("^\\s*" + itemIndex + "(?![^.,:\\s])", 
+                                                  itemizeItem(itemIndex, index));
+            }
+            return new StringBuilder("#{").append(newContent).append("}").toString();
+        }
+    });
+	// 将解析后的SQL语句片段追加到delegate中保存
+    delegate.appendSql(parser.parse(sql));
+}
+```
+
+回到ForeachSqlNode.apply()方法的分析，该方法的主要步骤如下：
+
+（1）解析集合表达式，获取对应的实际参数。
+
+（2）在循环开始之前，添加open字段指定的字符串。
+
+（3）开始遍历集合，根据遍历的位置和是否指定分隔符，用PrefixedContext封装DynamicContext。
+
+（4）调用applyIndex()方法将index添加到DynamicContext.bindings集合中，供后续解析使用。
+
+（5）调用applyItem()方法将item添加到DynamicContext.bindings集合中，供后续解析使用。
+
+（6）转换子节点中的"#{}"占位符，此步骤会将PrefixedContext封装成FilterDynamicContext，在追加子节点转换结果时，就会使用FilterDynamicContext.apply()方法"#{}"占位符转换成"#{__frch\_...}"的格式。
+
+（7）循环结束后，调用DynamicContext.appendSql()方法添加close指定的字符串。
+
 
 
 
