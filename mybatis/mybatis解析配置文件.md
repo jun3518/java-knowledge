@@ -433,22 +433,103 @@ ResultMapping对象记录了结果集中的一列与JavaBean中一个属性之�
 
 ```java
 public class ResultMapping {
-	
+	// Configuration对象
     private Configuration configuration;
+    // 对应节点的property属性，表示的是与该列进行映射的属性
     private String property;
+    // 对应节点的column属性，表示的是从数据库中得到的列名或是列名的别名
     private String column;
+    // 对应节点的javaType属性，表示的是一个JavaBean的完全限定名，或一个类型别名
     private Class<?> javaType;
+    // 对应节点的jdbcType属性，表示的是进行映射的列的JDBC类型
     private JdbcType jdbcType;
+    // 对应节点的typeHandler属性，表示的是类型处理器，它会覆盖默认的类型处理器
     private TypeHandler<?> typeHandler;
+    // 对应节点的resultMap属性，该属性通过id引用另一个<resultMap>节点定义，它负责将结果集中的一部分列
+    // 映射成其他关联的结果对象，这样就可以通过join方式进行关联查询，然后直接映射成多个对象，并同时设置
+    // 蛇蝎对象之间的组合关系
     private String nestedResultMapId;
+    // 对应节点的select属性，该属性通过id引用了另一个<select>节点定义，它会把指定的列的值传入select
+    // 属性指定的select语句中作为参数进行查询。使用select属性可能会导致N+1问题。
     private String nestedQueryId;
+    // 对应节点的notNullColumn属性拆分后的结果
     private Set<String> notNullColumns;
+    // 对应节点的columnPrefix属性
     private String columnPrefix;
+    // 处理后的标志，标志供两个：id和constructor
     private List<ResultFlag> flags;
+    // 对应节点的column属性拆分后生成的结果，composites.size()>0会使column为null
     private List<ResultMapping> composites;
+    // 对应节点的resultSet属性
     private String resultSet;
+    // 对应节点的foreignColumn属性
     private String foreignColumn;
+    // 是否延迟加载，对应节点的fetchType属性
     private boolean lazy;
 }
 ```
 
+每个\<resultMap>节点都会被解析成一个ResultMap对象，其中每个节点所定义的映射关系，则使用ResultMapping对象表示。
+
+ResultMap中各个字段的含义如下：
+
+```java
+public class ResultMap {
+	// <resultMap>节点的id属性
+    private String id;
+    // <resultMap>的type属性
+    private Class<?> type;
+    // 记录了除<discriminator>节点之外的其他映射关系(即ResultMapping对象集合)
+    private List<ResultMapping> resultMappings;
+    // 记录了映射关系中带有ID标志的映射关系，如<id>节点和<constructor>节点的<idArg>子节点
+    private List<ResultMapping> idResultMappings;
+    // 记录了映射关系中带有Constructor标志的映射关系，如：<constructor>所有子元素
+    private List<ResultMapping> constructorResultMappings;
+    // 记录了映射关系中不带有Constructor标志的映射关系
+    private List<ResultMapping> propertyResultMappings;
+    // 记录所有映射关系中涉及的column属性的集合
+    private Set<String> mappedColumns;
+    
+    private Set<String> mappedProperties;
+    // 鉴别器，对应<discriminator>节点
+    private Discriminator discriminator;
+    // 是否含有嵌套的结果映射，如果某个映射关系中存在resultMap属性，且不存在resultSet属性，则为true
+    private boolean hasNestedResultMaps;
+    // 是否含有嵌套查询，如果某个属性映射存在select属性，则为true
+    private boolean hasNestedQueries;
+    // 是否开启自动映射
+    private Boolean autoMapping;
+}
+```
+
+得到ResultMapping对象集合之后，会调用ResultMapResolver.resolve()方法，该方法会调用MapperBuilderAssistant.addResultMap()方法创建ResultMap对象，并将ResultMap对象添加到Configuration.resultMaps集合中保存。
+
+解析\<association>节点也是在XMLMapperBuilder.buildResultMappingFromContext()方法中完成解析。
+
+### 解析\<sql>节点
+
+在映射配置文件中，可以使用\<sql>节点定义可重用的SQL语句片段。当需要重用\<sql>节点中定义的SQL语句片段时，只需要使用\<include>节点引入相应的片段即可，这样在编写SQL语句以及维护这些SQL语句时，都会比较方便。
+
+```java
+private void sqlElement(List<XNode> list, String requiredDatabaseId) throws Exception {
+    // 遍历<sql>节点
+    for (XNode context : list) {
+        // 获取databaseId属性
+        String databaseId = context.getStringAttribute("databaseId");
+        // 获取id属性
+        String id = context.getStringAttribute("id");
+        //为id添加命名空间
+        id = builderAssistant.applyCurrentNamespace(id, false);
+        if (databaseIdMatchesCurrent(id, databaseId, requiredDatabaseId)) {
+            // 记录到XMLMapperBuilder.sqlFragments(Map<String, XNode>)中保存，
+            // 在记录到XMLMapperBuilder的构造函数中，可以看到该字段指向了
+            // Configuration.sqlFragments集合
+            sqlFragments.put(id, context);
+        }
+    }
+}
+```
+
+
+
+\<association>节点解析后产生的ResultMapping对象以及在Configurati
