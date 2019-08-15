@@ -532,4 +532,55 @@ private void sqlElement(List<XNode> list, String requiredDatabaseId) throws Exce
 
 
 
+## XMLStatementBuilder
+
+SQL节点主要用于定义SQL语句，它们由XMLStatementBuilder负责进行解析。
+
+Mybatis使用SqlSource接口表示映射文件或注解中定义的SQL语句，但它表示的SQL语句时不能直接被数据库执行，因为其中可能包含动态SQL语句相关的节点或是占位符等需要解析的元素。
+
+SqlSource接口的定义如下：
+
+```java
+public interface SqlSource {
+	//getBoundSql()方法会根据映射文件或注解描述的SQL语句，以及传入的参数，返回可执行的SQL
+  BoundSql getBoundSql(Object parameterObject);
+}
+```
+
+Mybatis使用MappedStatement表示映射配置文件中定义的SQL节点，MappedStatement包含了这些节点的很多属性，其中比较重要的字段如下：
+
+```java
+public final class MappedStatement {
+	// 节点中的id属性（包含命名空间前缀）
+    private String resource;
+    // SqlSource对象，对应一条SQL语句
+    private SqlSource sqlSource;
+    //SQL的类型，INSERT、UPDATE、DELETE、SELECT
+    private SqlCommandType sqlCommandType;
+}
+```
+
+XMLStatementBuilder#parseStatementNode()方法是解析SQL节点的入口函数：
+
+```java
+public void parseStatementNode() {
+    // ...
+    // 根据SQL节点的名称决定其SQLCommandType
+    String nodeName = context.getNode().getNodeName();
+    SqlCommandType sqlCommandType = SqlCommandType.valueOf(nodeName.toUpperCase(Locale.ENGLISH));
+    //...
+    // 在解析SQL语句之前，先处理其中的<include>节点
+    XMLIncludeTransformer includeParser = new XMLIncludeTransformer(configuration, builderAssistant);
+    includeParser.applyIncludes(context.getNode());
+    // 处理<selectKey>节点
+    processSelectKeyNodes(id, parameterTypeClass, langDriver);
+
+    // ...
+}
+```
+
+### 解析\<incude>节点
+
+在解析SQL节点之前，首先通过XMLInclude
+
 \<association>节点解析后产生的ResultMapping对象以及在Configurati
