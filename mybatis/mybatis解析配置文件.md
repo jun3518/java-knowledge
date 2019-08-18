@@ -581,6 +581,232 @@ public void parseStatementNode() {
 
 ### 解析\<incude>节点
 
-在解析SQL节点之前，首先通过XMLInclude
+在解析SQL节点之前，首先通过XMLIncludeTransformer解析SQL语句中的\<include>节点，该过程会将\<incude>节点替换成\<sql>节点中定义的SQL片段，并将其中的"${xxx}"占位符替换成真实的参数，该解析过程是在XMLIncludeTransformer.applyIncludes()方法中实现的：
 
-\<association>节点解析后产生的ResultMapping对象以及在Configurati
+```java
+private void applyIncludes(Node source, final Properties variablesContext) {
+    if (source.getNodeName().equals("include")) {
+        Properties fullContext;
+        String refid = getStringAttribute(source, "refid");
+        refid = PropertyParser.parse(refid, variablesContext);
+        // 查找refid属性指向的<sql>节点，返回的是其深克隆的Node对象
+        Node toInclude = findSqlFragment(refid);
+        // 解析<include>节点下的<property>节点，将得到的键值对添加到variablesContext中，并形成
+        // 新的Properties对象返回，用于替换占位符
+        Properties newVariablesContext = getVariablesContext(source, variablesContext);
+        if (!newVariablesContext.isEmpty()) {
+            fullContext = new Properties();
+            fullContext.putAll(variablesContext);
+            fullContext.putAll(newVariablesContext);
+        } else {
+            fullContext = variablesContext;
+        }
+        // 递归处理<include>节点，在<sql>节点中可能会使用<include>引用了其他SQL片段
+        applyIncludes(toInclude, fullContext);
+        if (toInclude.getOwnerDocument() != source.getOwnerDocument()) {
+            toInclude = source.getOwnerDocument().importNode(toInclude, true);
+        }
+        // 将<include>节点替换成<sql>节点
+        source.getParentNode().replaceChild(toInclude, source);
+        while (toInclude.hasChildNodes()) {
+        // 将<sql>节点的子节点添加到<sql>节点的前面
+            toInclude.getParentNode().insertBefore(toInclude.getFirstChild(), toInclude);
+        }
+       // 删除<sql>节点
+        toInclude.getParentNode().removeChild(toInclude);
+    } else if (source.getNodeType() == Node.ELEMENT_NODE) {
+        // 遍历当前SQL语句的子节点
+        NodeList children = source.getChildNodes();
+        for (int i=0; i<children.getLength(); i++) {
+            applyIncludes(children.item(i), variablesContext);
+        }
+    } else if (source.getNodeType() == Node.ATTRIBUTE_NODE 
+               && !variablesContext.isEmpty()) {
+        // 使用之前解析得到的Properties对象替换对应的占位符
+        source.setNodeValue(PropertyParser.parse(source.getNodeValue(), 
+                                                 variablesContext));
+    } else if (source.getNodeType() == Node.TEXT_NODE && !variablesContext.isEmpty()) {
+        source.setNodeValue(PropertyParser.parse(source.getNodeValue(), 
+                                                 variablesContext));
+    }
+}
+```
+
+![](./images/include的SQL举例.png)
+
+![](./images/include的applyCludes()方法的递归调用.png)
+
+\<include>节点和\<sql>节点可以配合使用、多层嵌套，实现更加复杂的sql片段的重用，这样解析过程就会递归更多层，流程变得更加复杂，但本质与上述分析过程相同。
+
+### 解析\<selectKey>节点
+
+在\<insert>、\<update>节点中可以定义\<selectKey>节点来解决主键自增问题。
+
+XMLStatementBuilder.processSelectKeyNodes()方法负责解析SQL节点中的\<selectKey>子节点：
+
+```java
+private void processSelectKeyNodes(String id, Class<?> parameterTypeClass, LanguageDriver langDriver) {
+    // 获取全部的<selectKey>节点
+    List<XNode> selectKeyNodes = context.evalNodes("selectKey");
+    // 解析<selectKey>节点
+    if (configuration.getDatabaseId() != null) {
+        parseSelectKeyNodes(id, selectKeyNodes, parameterTypeClass, langDriver, configuration.getDatabaseId());
+    }
+    parseSelectKeyNodes(id, selectKeyNodes, parameterTypeClass, langDriver, null);
+    // 移除<selectKey>节点
+    removeSelectKeyNodes(selectKeyNodes);
+}
+```
+
+### 解析SQL节点
+
+## 3.1.6 绑定Mapper接口
+
+每个映射配置文件的命名空间可以绑定一个Mapper接口，并注册到MapperRegistry中。在XMLMapperBuilder.bindMapperForNamespace()方法中，完成了映射配置文件与对应的Mapper接口的绑定：
+
+```java
+private void bindMapperForNamespace() {
+    // 获取映射配置文件的命名空间
+    String namespace = builderAssistant.getCurrentNamespace();
+    if (namespace != null) {
+        Class<?> boundType = null;
+        // 解析命名空间对应的类型
+        boundType = Resources.classForName(namespace);
+        if (boundType != null) {
+            // 是否已经加载了boundType接口
+            if (!configuration.hasMapper(boundType)) {
+                // 追加namespace前缀，并添加到Configuration.loadResources集合中保存
+                configuration.addLoadedResource("namespace:" + namespace);
+                // 调用MapperRegistry.addMapper()方法，注册boundType接口
+                configuration.addMapper(boundType);
+            }
+        }
+    }
+}
+```
+
+在MapperRegistry.knownMappers集合注册指定的Mapper接口，其实该方法还会创建MapperAnnotationBuilder，并调用MapperAnnotationBuilder.parse()方法解析Mapper接口中的注解信息：
+
+```java
+public void parse() {
+    String resource = type.toString();
+    // 检测是否已经加载过该接口
+    if (!configuration.isResourceLoaded(resource)) {
+        // 检测是否加载过定义的映射配置文件，如果未加载，则创建XMLMapperBuilder对象解析对应的映射文件
+        loadXmlResource();
+        configuration.addLoadedResource(resource);
+        assistant.setCurrentNamespace(type.getName());
+        // 解析@CacheNamespace注解
+        parseCache();
+        // 解析@CacheNamespaceRef注解
+        parseCacheRef();
+        // 获取接口中定义的全部方法
+        Method[] methods = type.getMethods();
+        for (Method method : methods) {
+            try {
+                if (!method.isBridge()) {
+                    // 解析@SelectKey、@ResultMap等注解，并创建MappedStatement对象
+                    parseStatement(method);
+                }
+            } catch (IncompleteElementException e) {
+                // 如果解析过程出现IncompleteElementException异常，可能是引用了未解析的注解，这里
+                // 将出现异常的方法添加到Configuration.incompleteMethods集合中暂存，该集合是
+                // LinkedList<MethodResolver>类型
+                configuration.addIncompleteMethod(new MethodResolver(this, method));
+            }
+        }
+    }
+    // 遍历Configuration.incompleteMethods集合中记录的未解析的方法，并重新进行解析
+    parsePendingMethods();
+}
+```
+
+## 处理incomplete*集合
+
+XMLMapperBuilder.configurationElement()方法解析映射配置文件时，是按照从文件头到文件尾的顺序解析，但是有时候在解析一个节点时，会引用定义在该节点之后的、还未解析的节点，这就会导致解析失败并抛出IncompleteElementException。
+
+genuine抛出异常的节点不同，Mybatis会创建不同的*Resolver对象，并添加到Configuration的不同incomplete\*集合中。
+
+## 3.2 SqlNode&SqlSource
+
+映射配置文件中定义的SQL节点会被解析成MappedStatement对象，其中的SQL语句会被解析成SqlSource对象，SQL语句中定义的动态SQL节点、文本节点等，则由SqlNode接口的相应实现表示。
+
+SqlSource接口的定义如下表示：
+
+```java
+public interface SqlSource {
+	// 通过解析得到BoundSql对象，其中封装了包含“?”占位符的SQL语句，以及绑定的实参。
+    BoundSql getBoundSql(Object parameterObject);
+}
+```
+
+![](./images/SqlSource接口以及实现类.png)
+
+DynamicSqlSource负责处理动态SQL语句，RawSqlSource负责处理静态语句，两者最终都会将处理后的SQL语句封装成StaticSqlSource返回。
+
+DynamicSqlSource与StaticSqlSource的主要区别是：StaticSqlSource中记录的SQL语句中可能含有“?”占位符，但是可以直接交给数据库执行；DynamicSqlSource中封装的SQL语句还需要进行一系列解析，才会最终形成数据库可执行的SQL语句。
+
+### 组合模式
+
+组合模式是将对象组合成树形结构，以表示“部分-整体”的层次结构（一般是树形结构），用户可以像处理一个简单对象一样来处理一个复杂对象，从而使得调用者无须了解复杂元素的内部结构。
+
+![](F:\spring-aop\mybatis\images\组合模式的结构图.png)
+
+组合模式中的角色如下：
+
+（1）抽象组件（Component）：Component接口定义了树形结构中所有类的公共行为，如：operation()方法。一般情况下，其中还会定义一些用于管理子组件的方法，如：add()、remove()等方法。
+
+（2）树叶（Leaf）：Leaf在树形结构中表示叶节点对象，叶节点没有子节点。
+
+（3）树枝（Composite）：定义有子组件的哪些组件的行为。该角色用于管理子组件，并通过operation()方法调用其管理的子组件的相关操作。
+
+（4）调用者（Client）：通过Component接口操纵整个树形结构。
+
+组合模式的优点：
+
+（1）组合模式可以帮助调用者屏蔽对象的复杂性。对于调用者来说，使用整个树形结构与使用单个Component对象没有任何区别，即：调用者并不必关系处理的是单个Component对象还是整个树形结构，这样就可以将调用者与复杂对象进行解耦。
+
+（2）组合模式可以通过增加树中节点的方式，添加新的Component对象，从而实现功能上的扩展，这符合“开闭原则”，可以简化日后的维护工作。
+
+组合模式的缺点：
+
+有些场景下程序希望一个组合模式中只能有某些特定的组件，此时就很难直接通过组件类型进行限制（因为都是Component接口的实现类），这就必须在运行时进行类型检测。而且在递归程序中定位问题也是一件比较复杂的事情。
+
+Mybatis在处理动态SQL节点时，应用到了组合设计模式。MybatisUI将动态SQL节点解析成对应的SqlNode实现，并形成树形结构。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
