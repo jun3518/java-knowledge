@@ -750,7 +750,7 @@ DynamicSqlSource与StaticSqlSource的主要区别是：StaticSqlSource中记录�
 
 组合模式是将对象组合成树形结构，以表示“部分-整体”的层次结构（一般是树形结构），用户可以像处理一个简单对象一样来处理一个复杂对象，从而使得调用者无须了解复杂元素的内部结构。
 
-![](F:\spring-aop\mybatis\images\组合模式的结构图.png)
+![](./images/组合模式的结构图.png)
 
 组合模式中的角色如下：
 
@@ -773,6 +773,35 @@ DynamicSqlSource与StaticSqlSource的主要区别是：StaticSqlSource中记录�
 有些场景下程序希望一个组合模式中只能有某些特定的组件，此时就很难直接通过组件类型进行限制（因为都是Component接口的实现类），这就必须在运行时进行类型检测。而且在递归程序中定位问题也是一件比较复杂的事情。
 
 Mybatis在处理动态SQL节点时，应用到了组合设计模式。MybatisUI将动态SQL节点解析成对应的SqlNode实现，并形成树形结构。
+
+### DynamicContext
+
+DynamicContext主要用于记录解析动态SQL语句之后产生的SQL片段，可以认为它是一个用于记录动态SQL语句解析结果的容器。
+
+```java
+public class DynamicContext {
+    public static final String PARAMETER_OBJECT_KEY = "_parameter";
+  	public static final String DATABASE_ID_KEY = "_databaseId";
+    // 参数上下文
+    private final ContextMap bindings;
+    // 在SqlNode解析动态SQL时，会将解析后的SQL语句片段添加到该属性中保存，最终拼凑除一条完整的SQL语句
+    private final StringBuilder sqlBuilder = new StringBuilder();
+    private int uniqueNumber = 0;
+    public DynamicContext(Configuration configuration, Object parameterObject) {
+        if (parameterObject != null && !(parameterObject instanceof Map)) {
+            // 对于非Map类型的参数，会创建对应的MetaObject对象，并封装成ContextMap对象
+            MetaObject metaObject = configuration.newMetaObject(parameterObject);
+            bindings = new ContextMap(metaObject);
+        } else {
+            bindings = new ContextMap(null);
+        }
+        // 将key为：_parameter，value为：parameterObject的对应关系添加到bindings集合中
+        // 其中_parameter在有的SqlNode实现中直接使用了该字面值
+        bindings.put(PARAMETER_OBJECT_KEY, parameterObject);
+        bindings.put(DATABASE_ID_KEY, configuration.getDatabaseId());
+    }
+}
+```
 
 
 
