@@ -803,6 +803,36 @@ public class DynamicContext {
 }
 ```
 
+DynamicContext中常用的两个方法是appendSql()方法和getSql()方法：
+
+```java
+// 追加SQL片段
+public void appendSql(String sql) {
+    sqlBuilder.append(sql);
+    sqlBuilder.append(" ");
+}
+// 获取解析后的、完整的SQL语句
+public String getSql() {
+    return sqlBuilder.toString().trim();
+}
+```
+
+### SqlNode
+
+SqlNode接口的定义如下：
+
+```java
+public interface SqlNode {
+    // apply()是SqlNode接口中定义的唯一方法，该方法会根据用户传入的实参，参数解析该SqlNode所记录的动态
+    // SQL节点，并调用DynamicContext.appendSql()方法将解析后的SQL片段追加到
+    // DynamicContext.sqlBuilder中保存。当SQL节点下的所有SqlNode完成解析后，就可以从
+    // DynamicContext中获取一条动态生成的、完整的SQL语句。
+    boolean apply(DynamicContext context);
+}
+```
+
+SqlNode接口有很多个实现类，每个实现类对应一个动态SQL节点，按照组合模式来划分，SqlNode扮演了抽象的角色，MixedSqlNode扮演了树枝的角色，TextSqlNode节点扮演了树叶的角色。
+
 
 
 
