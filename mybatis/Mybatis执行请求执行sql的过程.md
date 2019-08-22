@@ -213,6 +213,75 @@ public void startManagedSession() {
 
 
 
+## DefaultSqlSession#getMapper请求
+
+DefaultSqlSession#getMapper是Mybatis请求的入口：
+
+```java
+// org.apache.ibatis.session.defaults.DefaultSqlSession#getMapper
+public <T> T getMapper(Class<T> type) {
+    return configuration.<T>getMapper(type, this);
+}
+// org.apache.ibatis.session.Configuration#getMapper
+public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
+    return mapperRegistry.getMapper(type, sqlSession);
+}
+// org.apache.ibatis.binding.MapperRegistry#getMapper
+public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
+    final MapperProxyFactory<T> mapperProxyFactory = 
+        (MapperProxyFactory<T>) knownMappers.get(type);
+    if (mapperProxyFactory == null) {
+        throw new BindingException("...");
+    }
+    try {
+        return mapperProxyFactory.newInstance(sqlSession);
+    } catch (Exception e) {
+        throw new BindingException("...");
+    }
+}
+// MapperProxyFactory#newInstance(SqlSession)
+public T newInstance(SqlSession sqlSession) {
+    final MapperProxy<T> mapperProxy = new MapperProxy<T>(sqlSession, mapperInterface, 
+                                                          methodCache);
+    return newInstance(mapperProxy);
+}
+//MapperProxyFactory#newInstance(MapperProxy<T>)
+protected T newInstance(MapperProxy<T> mapperProxy) {
+    return (T) Proxy.newProxyInstance(mapperInterface.getClassLoader(), 
+                                      new Class[] { mapperInterface }, mapperProxy);
+}
+```
+
+其中，type是接口类的Class对象。一个type类型的Class对象会在MapperRegistry#knownMappers属性中映射一个MapperProxyFactory对象。MapperProxyFactory#methodCache的Map属性中，type类型接口的方法会对应一个MapperMethod对象。
+
+对于MapperProxy类，它实现了java.lang.reflect.InvocationHandler接口，Mybatis就是通过MapperProxy类，实现对接口和Mapper的关联，操作接口的某个方法时，就是操作MapperMethod对应的SQL节点。
+
+当执行type.method时，实际上就是执行MapperProxy#invoke方法：
+
+```java
+public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    // method是Object中声明的方法时，直接放行。
+    if (Object.class.equals(method.getDeclaringClass())) {
+        try {
+            return method.invoke(this, args);
+        } catch (Throwable t) {
+            throw ExceptionUtil.unwrapThrowable(t);
+        }
+    }
+    final MapperMethod mapperMethod = cachedMapperMethod(method);
+    return mapperMethod.execute(sqlSession, args);
+}
+// MapperProxy#cachedMapperMethod
+private MapperMethod cachedMapperMethod(Method method) {
+    // 每一个MapperProxy实例都会对MapperMethod对象进行缓存操作
+    MapperMethod mapperMethod = methodCache.get(method);
+    if (mapperMethod == null) {
+        mapperMethod = new MapperMethod(mapperInterface, method, sqlSession.getConfiguration());
+        methodCache.put(method, mapperMethod);
+    }
+    return mapperMethod;
+}
+```
 
 
 
@@ -247,4 +316,76 @@ public void startManagedSession() {
 
 
 
-（1）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

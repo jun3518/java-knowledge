@@ -61,7 +61,12 @@ public void parseStatementNode() {
 </sql>
 <!--sql语句-->
 <select id="selectList" resultMap="com.mybatis.bo.User">
-    select * from <include refid="tableName"/>
+    select 
+    	* 
+    from 
+    	<include refid="tableName"/> 
+    where
+    	id = #{id}
 </select>
 ```
 
@@ -80,18 +85,25 @@ public void applyIncludes(Node source) {
 
 ```java
 private void applyIncludes(Node source, final Properties variablesContext, boolean included) {
+    	// 解析<include>标签
     if (source.getNodeName().equals("include")) {
+      	// 查找refid属性指向的<sql>节点，返回的是其深克隆的Node对象
       Node toInclude = findSqlFragment(getStringAttribute(source, "refid"), 
                                        variablesContext);
+        // 解析<include>节点下的<property>节点，将得到的键值对添加到variablesContext中，并形成
+        // 新的Properties对象返回，用于替换占位符
       Properties toIncludeContext = getVariablesContext(source, variablesContext);
+      	// 递归处理<include>节点，在<sql>节点中可能会使用<include>引用了其他SQL片段
       applyIncludes(toInclude, toIncludeContext, true);
       if (toInclude.getOwnerDocument() != source.getOwnerDocument()) {
         toInclude = source.getOwnerDocument().importNode(toInclude, true);
       }
+        // 将<include>节点替换成<sql>节点
       source.getParentNode().replaceChild(toInclude, source);
       while (toInclude.hasChildNodes()) {
         toInclude.getParentNode().insertBefore(toInclude.getFirstChild(), toInclude);
       }
+        // 删除<sql>节点
       toInclude.getParentNode().removeChild(toInclude);
     } else if (source.getNodeType() == Node.ELEMENT_NODE) {
       if (included && !variablesContext.isEmpty()) {
@@ -108,11 +120,87 @@ private void applyIncludes(Node source, final Properties variablesContext, boole
       }
     } else if (included && source.getNodeType() == Node.TEXT_NODE
         && !variablesContext.isEmpty()) {
-      // replace variables in text node
+       // 使用之前解析得到的Properties对象替换对应的占位符
       source.setNodeValue(PropertyParser.parse(source.getNodeValue(), variablesContext));
     }
   }
 ```
 
+对于id为selectList的SQL语句，Mybatis会将其解析为三个部分，即：
 
+```java
+else if (source.getNodeType() == Node.ELEMENT_NODE) {
+    NodeList children = source.getChildNodes();
+    for (int i=0; i<children.getLength(); i++) {
+        applyIncludes(children.item(i), variablesContext);
+    }
+}
+```
+
+（1）select  *  from 
+
+（2）\<include refid="tableName"/> 
+
+（3）where id = #{id}
+
+对于（2）类型的节点，Mybatis会解析\<include>节点下的\<property>节点，将得到的键值对添加到variablesContext中，并形成新的Properties对象返回，用于替换占位符。接着递归处理\<include>节点，在\<sql>节点中可能会使用\<include>引用了其他SQL片段。最后删除\<sql>节点。
+
+### 解析SQL
+
+在上述代码中的：
+
+```java
+LanguageDriver langDriver = getLanguageDriver(lang);
+SqlSource sqlSource = langDriver.createSqlSource(configuration, context, 
+                                                 parameterTypeClass);
+```
+
+Mybatis默认的LanguageDriver实现类是XMLLanguageDriver。
+
+跟踪代码langDriver.createSqlSource(...)：
+
+```java
+public SqlSource parseScriptNode() {
+    // 解析SQL内容，如果存在动态SQL节点的元素，递归解析，直到获取到TextSqlNode的List集合
+    List<SqlNode> contents = parseDynamicTags(context);
+    MixedSqlNode rootSqlNode = new MixedSqlNode(contents);
+    SqlSource sqlSource = null;
+    if (isDynamic) {
+        sqlSource = new DynamicSqlSource(configuration, rootSqlNode);
+    } else {
+        sqlSource = new RawSqlSource(configuration, rootSqlNode, parameterType);
+    }
+    return sqlSource;
+}
+```
+
+```java
+List<SqlNode> parseDynamicTags(XNode node) {
+    List<SqlNode> contents = new ArrayList<SqlNode>();
+    NodeList children = node.getNode().getChildNodes();
+    for (int i = 0; i < children.getLength(); i++) {
+        XNode child = node.newXNode(children.item(i));
+        // 如果文本Node节点，则将文本内容封装到TextSqlNode中
+        if (child.getNode().getNodeType() == Node.CDATA_SECTION_NODE || 
+            child.getNode().getNodeType() == Node.TEXT_NODE) {
+            String data = child.getStringBody("");
+            TextSqlNode textSqlNode = new TextSqlNode(data);
+            if (textSqlNode.isDynamic()) {
+                contents.add(textSqlNode);
+                isDynamic = true;
+            } else {
+                contents.add(new StaticTextSqlNode(data));
+            }
+        } else if (child.getNode().getNodeType() == Node.ELEMENT_NODE) { 
+            NodeHandler handler = nodeHandlers(nodeName);
+            if (handler == null) {
+                throw new BuilderException("...");
+            }
+            handler.handleNode(child, contents);
+            isDynamic = true;
+        }
+    }
+    return contents;
+}
+```
 
