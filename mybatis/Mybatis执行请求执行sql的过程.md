@@ -283,6 +283,86 @@ private MapperMethod cachedMapperMethod(Method method) {
 }
 ```
 
+跟踪mapperMethod.execute(sqlSession, args)：
+
+```java
+public Object execute(SqlSession sqlSession, Object[] args) {
+    Object result;
+    switch (command.getType()) {
+        case INSERT: {
+            Object param = method.convertArgsToSqlCommandParam(args);
+            result = rowCountResult(sqlSession.insert(command.getName(), param));
+            break;
+        }
+        case UPDATE: {
+            Object param = method.convertArgsToSqlCommandParam(args);
+            result = rowCountResult(sqlSession.update(command.getName(), param));
+            break;
+        }
+        case DELETE: {
+            Object param = method.convertArgsToSqlCommandParam(args);
+            result = rowCountResult(sqlSession.delete(command.getName(), param));
+            break;
+        }
+        case SELECT:
+            if (method.returnsVoid() && method.hasResultHandler()) {
+                executeWithResultHandler(sqlSession, args);
+                result = null;
+            } else if (method.returnsMany()) {
+                result = executeForMany(sqlSession, args);
+            } else if (method.returnsMap()) {
+                result = executeForMap(sqlSession, args);
+            } else if (method.returnsCursor()) {
+                result = executeForCursor(sqlSession, args);
+            } else {
+                Object param = method.convertArgsToSqlCommandParam(args);
+                result = sqlSession.selectOne(command.getName(), param);
+            }
+            break;
+        case FLUSH:
+            result = sqlSession.flushStatements();
+            break;
+        default:
+            throw new BindingException("...");
+    }
+    if (result == null && method.getReturnType().isPrimitive() 
+        && !method.returnsVoid()) {
+        throw new BindingException("...");
+    }
+    return result;
+}
+```
+
+UPDATE、DELETE、INSERT最后都会转化为Executor#update执行：
+
+```java
+// SqlSession#insert(java.lang.String, java.lang.Object)
+public int update(String statement, Object parameter) {
+    try {
+        dirty = true;
+        MappedStatement ms = configuration.getMappedStatement(statement);
+        return executor.update(ms, wrapCollection(parameter));
+    } catch (Exception e) {
+        throw ExceptionFactory.wrapException("Error updating database.  Cause: " + e, e);
+    } finally {
+        ErrorContext.instance().reset();
+    }
+}
+// Executor#update
+public int update(MappedStatement ms, Object parameter) throws SQLException {
+    ErrorContext.instance().resource(ms.getResource())
+        .activity("executing an update").object(ms.getId());
+    if (closed) {
+        throw new ExecutorException("Executor was closed.");
+    }
+    // 清除一级缓存
+    clearLocalCache();
+    return doUpdate(ms, parameter);
+}
+```
+
+
+
 
 
 
