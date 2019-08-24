@@ -440,7 +440,137 @@ public void registerAlias(String name, String alias) {
 
 # 第4章 自定义标签的解析
 
+## 4.1 自定义标签使用
 
+Spring提供了可扩展Schema的支持，扩展Spring自定义标签配置大致需要以下几个步骤：
+
+（1）创建一个需要扩展的组件。
+
+（2）定义一个XSD文件描述组件内容。
+
+（3）创建一个文件，实现BeanDefinitionParser接口，用来解析XSD文件中的定义和组件定义。
+
+（4）创建一个Handler文件，扩展自NamespaceHandlerSupport，目的是将组件注册到Spring容器。
+
+（5）编写Spring.handlers和Spring.schemas文件。
+
+1. 创建一个普通的POJO类
+
+这个POJO类没有任何特别之处，只是用来接收配置文件：
+
+```java
+@Data
+public class UserBean {
+	private String username;
+	private String email;
+}
+```
+
+2. 定义一个XSD文件描述组件内容
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<schema xmlns="http://www.w3.org/2001/XMLSchema"
+	targetNamespace="http://www.lexueba.com/schema/user"
+	xmlns:tns="http://www.lexueba.com/schema/user"
+	elementFormDefault="qualified">
+	<element name="user">
+		<complexType>
+			<attribute name="id" type="string"/>
+			<attribute name="username" type="string"/>
+			<attribute name="email" type="string"/>
+		</complexType>
+	</element>
+</schema>
+```
+
+3. 创建实现BeanDefinitionParser接口的Java类
+
+这个Java类用来解析XSD文件中的定义和组件定义：
+
+```java
+public class UserBeanDefinitionParser extends AbstractSingleBeanDefinitionParser {
+
+	@Override
+	protected Class<?> getBeanClass(Element element) {
+		return UserBean.class;
+	}
+	
+	@Override
+	protected void doParse(Element element, BeanDefinitionBuilder builder) {
+		String userName = element.getAttribute("userName");
+		String email = element.getAttribute("email");
+		if(StringUtils.hasText(userName)) {
+			builder.addPropertyValue("userName", userName);
+		}
+		if(StringUtils.hasText(email)) {
+			builder.addPropertyValue("email", email);
+		}
+	}
+}
+```
+
+4. 创建一个扩展NamespaceHandlerSupport的Java类
+
+这个类扩展自NamespaceHandlerSupport，目的是将组件注册到Spring容器。
+
+```java
+public class UserNamespaceHandler extends NamespaceHandlerSupport {
+
+	@Override
+	public void init() {
+		registerBeanDefinitionParser("user", new UserBeanDefinitionParser());
+	}
+
+}
+```
+
+5. 编写Spring.handlers和Spring.schemas文件，默认位置是在工程的/META-INF/文件夹下，也可以通过Spring的扩展或者修改源码的方式改变路径。
+
+（1）Spring.handlers
+
+```xml
+http\://www.lexueba.com/schema/user=spring.handler.UserNamespaceHandler
+```
+
+（2）Spring.schemas
+
+```xml
+http\://www.lexueba.com/schema/user.xsd=META-INF/spring-test.xsd
+```
+
+6. 创建测试配置文件，在配置文件中引入对应的命名空间以及XSD后，便可以直接使用自定义标签了
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:myname="http://www.lexueba.com/schema/user"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+    http://www.springframework.org/schema/beans/spring-beans-4.1.xsd
+    http://www.lexueba.com/schema/user
+    http://www.lexueba.com/schema/user/user.xsd">
+
+	<myname:user id="testBean" userName="aaa" email="bbb"/>
+	
+</beans>
+```
+
+7. 测试
+
+```java
+public class Test {
+
+	public static void main(String[] args) {
+
+		ApplicationContext context = new ClassPathXmlApplicationContext("");
+		UserBean userBean = context.getBean("testBean", UserBean.class);
+		
+		System.out.println(userBean);
+		
+	}
+}
+```
 
 
 
