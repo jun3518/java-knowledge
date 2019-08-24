@@ -771,6 +771,8 @@ public interface FactoryBean<T> {
 
 ## 5.2 缓存中获取单例bean
 
+单例在Spring的同一个容器中只会被创建一次，后续再获取bean直接从单例缓存中获取。当然这里也只是尝试加载，首先尝试从缓存中加载，然后再次尝试从singletonFactories中加载。因为在创建单例bean的时候，会存在依赖注入的情况，而在创建依赖的时候为了避免循环依赖，Spring创建bean的原则是不等bean创建完成就会创建bean的ObjectFactory提早曝光加入到缓存中，一旦下一个bean创建时需要依赖上个bean，则直接使用ObjectFactory。
+
 
 
 
