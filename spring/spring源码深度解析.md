@@ -572,9 +572,216 @@ public class Test {
 }
 ```
 
+## 4.2 自定义标签解析
+
+```java
+public BeanDefinition parseCustomElement(Element ele, BeanDefinition containingBd) {
+    // 获取对应的命名空间
+    String namespaceUri = getNamespaceURI(ele);
+    // 根据命名空间找到对应的NamespaceHandler
+    NamespaceHandler handler = 
+        this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);
+    if (handler == null) {
+        return null;
+    }
+    // 调用自定义的NamespaceHandler进行解析
+    return handler.parse(ele, new ParserContext(this.readerContext, this, containingBd));
+}
+```
+
+自定义标签的实现的思路：根据对应的bean获取对应的命名空间，根据命名空间解析对应的处理器，然后根据用户自定义的处理器进行解析。
+
+# 第5章 bean的加载
+
+```java
+protected <T> T doGetBean( final String name, final Class<T> requiredType, 
+                  final Object[] args, boolean typeCheckOnly)throws BeansException {
+    // 提取对应的beanName
+    final String beanName = transformedBeanName(name);
+    Object bean;
+    /*
+    检查缓存中或者实例工厂中是否有对应的实例。因为在创建单例bean嘚瑟会后会存在依赖注入的情况，而在创建
+    依赖的时候为了避免循环依赖，Spring创建bean的原则是不等bean创建完成就会将创建bean的ObjectFactory
+    提早暴露，也就是将ObjectFactory加入到缓存中，一旦下个bean创建时候需要依赖上个bean，则直接使用
+    ObjectFactory
+    */
+    // 直接尝试从缓存获取或者singletonFactories中的ObjectFactory中获取
+	Object sharedInstance = getSingleton(beanName);
+    if (sharedInstance != null && args == null) {
+        // 返回对应的实例，有时候存在诸如BeanFactory的情况并不是直接返回实例本身，而是返回指定方法
+        // 返回的实例
+        bean = getObjectForBeanInstance(sharedInstance, name, beanName, null);
+    } else {
+        /*
+        只有在单例情况才会尝试解决循环依赖，原型模式情况下，如果存在A中有B的属性，B中有A的属性，那么当
+        依赖注入的是偶，就会产生当A还未创建完的时候因为对于B的创建再次返回创建A，造成循环依赖
+        */
+        if (isPrototypeCurrentlyInCreation(beanName)) {
+            throw new BeanCurrentlyInCreationException(beanName);
+        }
+        BeanFactory parentBeanFactory = getParentBeanFactory();
+        // 如果beanDefinitionMap中也就是在所有已经加载的类中不包括beanName，则尝试从
+        // parentBeanFactory中检测
+        if (parentBeanFactory != null && !containsBeanDefinition(beanName)) {
+            String nameToLookup = originalBeanName(name);
+            // 递归到BeanFactory中寻找
+            if (args != null) {
+                return (T) parentBeanFactory.getBean(nameToLookup, args);
+            }
+            else {
+                return parentBeanFactory.getBean(nameToLookup, requiredType);
+            }
+        }
+        // 如果不是仅仅做类型检查，则是创建bean，这里要进行记录
+        if (!typeCheckOnly) {
+            markBeanAsCreated(beanName);
+        }
+        final RootBeanDefinition mbd = getMergedLocalBeanDefinition(beanName);
+        checkMergedBeanDefinition(mbd, beanName, args);
+
+        // Guarantee initialization of beans that the current bean depends on.
+        String[] dependsOn = mbd.getDependsOn();
+        // 若存在依赖，则需要递归实例化依赖的bean
+        if (dependsOn != null) {
+            for (String dep : dependsOn) {
+                if (isDependent(beanName, dep)) {
+                    throw new BeanCreationException("...");
+                }
+                // 缓存依赖调用
+                registerDependentBean(dep, beanName);
+                try {
+                    getBean(dep);
+                }
+                catch (NoSuchBeanDefinitionException ex) {
+                    throw new BeanCreationException("...");
+                }
+            }
+        }
+        // 实例化依赖的bean后便可以实例化mbd本身了
+        // singleton模式的创建
+        if (mbd.isSingleton()) {
+            sharedInstance = getSingleton(beanName, new ObjectFactory<Object>() {
+                @Override
+                public Object getObject() throws BeansException {
+                    try {
+                        return createBean(beanName, mbd, args);
+                    }
+                    catch (BeansException ex) {
+                        destroySingleton(beanName);
+                        throw ex;
+                    }
+                }
+            });
+            bean = getObjectForBeanInstance(sharedInstance, name, beanName, mbd);
+        }
+        else if (mbd.isPrototype()) {
+            // prototype模式的创建(new)
+            Object prototypeInstance = null;
+            try {
+                beforePrototypeCreation(beanName);
+                prototypeInstance = createBean(beanName, mbd, args);
+            }
+            finally {
+                afterPrototypeCreation(beanName);
+            }
+            bean = getObjectForBeanInstance(prototypeInstance, name, beanName, mbd);
+        } else {
+            // 指定的scope上实例化bean
+            String scopeName = mbd.getScope();
+            final Scope scope = this.scopes.get(scopeName);
+            if (scope == null) {
+                throw new IllegalStateException("...");
+            }
+            try {
+                Object scopedInstance = scope.get(beanName, new ObjectFactory<Object>() {
+                    @Override
+                    public Object getObject() throws BeansException {
+                        beforePrototypeCreation(beanName);
+                        try {
+                            return createBean(beanName, mbd, args);
+                        }
+                        finally {
+                            afterPrototypeCreation(beanName);
+                        }
+                    }
+                });
+                bean = getObjectForBeanInstance(scopedInstance, name, beanName, mbd);
+            }
+            catch (IllegalStateException ex) {
+                throw new BeanCreationException("...");
+            }
+        }
+    }
+    // 检查需要的类型是否符合bean的实例类型
+    if (requiredType != null && bean != null && !requiredType.isInstance(bean)) {
+        try {
+            return getTypeConverter().convertIfNecessary(bean, requiredType);
+        }
+        catch (TypeMismatchException ex) {
+            throw new BeanNotOfRequiredTypeException("...");
+        }
+    }
+    return (T) bean;
+}
+```
+
+从上述代码来看，bean的加载经历了一个相当复杂的过程，其中涉及到各种各样的考虑。对于加载过程中涉及的步骤大致如下：
+
+（1）转换对应beanName。传入的参数可能是别名，也可能是FactoryBean，所以需要进行一系列的解析，解析内容包括如下：
+
+​		1）去除FactoryBean的修饰符，也就是如果name="&aa"，那么会首先去除&而使name="aa"。
+
+​		2）取指定alias所表示的最终beanName，如别名A指向名称为B的bean，则返回B；若别名A指向别名B，别名B又指向名称C的bean，则返回C。
+
+（2）尝试从缓存中加载单例。单例在Spring的同一个容器内只会被创建一次，后续再获取bean，就直接从单例缓存中获取了。首先尝试从缓存中加载，如果加载不成功则再次尝试从singletonFactories中加载。因为在创建单例bean的时候会存在依赖注入的情况，而在创建依赖的时候为了避免循环依赖，在Spring中创建bean的原则是不等bean创建完成就会将创建bean的ObjectFactory提早曝光加入到缓存中，一旦下一个bean创建时候需要依赖上一个bean，则直接使用ObjectFactory。
+
+（3）bean的实例化。如果从缓存中得到了bean的原始状态，则需要对bean进行实例化。缓存中记录的只是最原始的bean状态，并不一定是最终想要的bean。如：需要对工厂bean进行处理，那么这里得到的其实是工厂bean的初始状态，但是真正需要的是工厂bean中定义的factory-method方法中返回的bean，而getObjectForBeanInstance就是完成这个工作的。
+
+（4）原形模式的依赖检查。只有在单例情况下才会尝试解决循环依赖，如果存在A中有B的属性，B中有A的属性，那么当依赖注入的时候，就会产生当A还未创建完的时候因为对于B的创建再次返回创建A，造成循环依赖。即：isPrototypeCurrentlyInCreation(beanName)为true。
+
+（5）检测parentBeanFactory。如果缓存没有数据的话，直接转到父类工厂加载。
+
+（6）将存储XML配置文件的GenericBeanDefinition转换为RootBeanDefinition。因为从XML配置文件中读取到的Bean信息是存储在GenericBeanDefinition中的，但是所有的Bean后续处理都是针对于RootBeanDefinition的，所以这里需要进行一个转换，转换的同时如果父类bean不为空的话，则会一并合并父类的属性。
+
+（7）寻找依赖。因为bean的初始化过程中很可能会用到某些属性，而某些属性很可能是动态配置的，并且配置成依赖于其他的bean，那么这个时候就有必要加载依赖的bean。所以在Spring的加载顺序中，在初始化某一个bean的时候首先会初始化这个bean所对应的依赖。
+
+（8）针对不同的scope进行bean的创建。
+
+（9）类型转换。将返回的bean转换为requiredType所指定的类型。即：getTypeConverter().convertIfNecessary(bean, requiredType)。
+
+## 5.1 FactoryBean的使用
+
+一般情况下，Spring通过反射机制利用bean的class属性指定实现类来实例化bean。在某些情况下，实例化bean过程比较复杂，如果按照传统的方式，则需要在\<bean>中提供大量的配置信息，配置方式的灵活性是受限的，这时采用编码的方式会比较简单。
+
+Spring为此提供了一个org.springframework.beans.factory.FactoryBean的工厂接口，用户可以通过实现该接口定制实例化bean的逻辑。
+
+```java
+public interface FactoryBean<T> {
+	// 返回由FactoryBean创建的bean实例，如果isSingleton()返回true，则该实例会放到Spring容器单例
+    // 缓存池中
+	T getObject() throws Exception;
+    // 返回FactoryBean创建的bean类型
+	Class<?> getObjectType();
+    // 返回由FactoryBean创建的bean实例的作用域是singleton还是prototype
+	boolean isSingleton();
+}
+```
+
+当配置文件中\<bean>的class属性配置的实现类是FactoryBean时，通过getBean()方法返回的不是FactoryBean本身，而是FactoryBean#getObject()方法所返回的对象，相当于FactoryBean#getObject()代理了getBean()方法。当调用getBean()方法时，Spring通过反射机制发现该bean实现了FactoryBean的接口，这时Spring容器就调用接口方法FactoryBean#getObject()方法返回真实的bean实例。如果希望获取FactoryBean实例，则需要在使用getBean(beanName)方法时再beanName前显式的加上"&"前缀，如：getBean("&car")。
+
+## 5.2 缓存中获取单例bean
 
 
 
+
+
+
+
+
+
+​	
+
+​	
 
 
 
