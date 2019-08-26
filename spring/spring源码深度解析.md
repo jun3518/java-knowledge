@@ -1719,7 +1719,89 @@ protected Object getEarlyBeanReference(String beanName, RootBeanDefinition mbd,
 
 ### 5.7.3 属性注入
 
+分析完循环依赖之后，对于属性填充，由AbstractAutowireCapableBeanFactory#populateBean完成：
 
+```java
+protected void populateBean(String beanName, RootBeanDefinition mbd, BeanWrapper bw) {
+    PropertyValues pvs = mbd.getPropertyValues();
+    if (bw == null) {
+        if (!pvs.isEmpty()) {
+            throw new BeanCreationException("...");
+        } else {
+            // 没有可填充的属性
+            return;
+        }
+    }
+    boolean continueWithPropertyPopulation = true;
+	if (!mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()) {
+        for (BeanPostProcessor bp : getBeanPostProcessors()) {
+            if (bp instanceof InstantiationAwareBeanPostProcessor) {
+                InstantiationAwareBeanPostProcessor ibp = 
+                    (InstantiationAwareBeanPostProcessor) bp;
+                // 返回值为是否继续填充bean
+                if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), 
+                                                       beanName)) {
+                    continueWithPropertyPopulation = false;
+                    break;
+                }
+            }
+        }
+    }
+    // 如果后处理器发出停止填充命令，则终止后续的执行
+    if (!continueWithPropertyPopulation) {
+        return;
+    }
+
+    if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+        mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+        MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+        // 根据名称自动站注入
+        if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+            autowireByName(beanName, mbd, bw, newPvs);
+        }
+        // 根据类型自动注入
+        if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+            autowireByType(beanName, mbd, bw, newPvs);
+        }
+        pvs = newPvs;
+    }
+    // 后处理器已经初始化
+    boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+    // 需要依赖检查
+    boolean needsDepCheck = (mbd.getDependencyCheck() != 
+                             RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+    if (hasInstAwareBpps || needsDepCheck) {
+        PropertyDescriptor[] filteredPds = 
+            filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+        if (hasInstAwareBpps) {
+            for (BeanPostProcessor bp : getBeanPostProcessors()) {
+                if (bp instanceof InstantiationAwareBeanPostProcessor) {
+                    InstantiationAwareBeanPostProcessor ibp = 
+                        (InstantiationAwareBeanPostProcessor) bp;
+                    // 对所有需要依赖检查的属性进行后处理
+                    pvs = ibp.postProcessPropertyValues(pvs, filteredPds, 
+                                                    bw.getWrappedInstance(), beanName);
+                    if (pvs == null) {
+                        return;
+                    }
+                }
+            }
+        }
+        if (needsDepCheck) {
+            // 依赖检查，对depends-on属性，3.0已经弃用此属性
+            checkDependencies(beanName, mbd, filteredPds, pvs);
+        }
+    }
+	// 将属性应用到bean中
+    applyPropertyValues(beanName, mbd, bw, pvs);
+}
+```
+
+在populateBean函数中提供了这样的处理流程：
+
+（1）
+
+P128
 
 
 
