@@ -2096,6 +2096,148 @@ protected void registerDisposableBeanIfNecessary(String beanName, Object bean,
 }
 ```
 
+# 第6章 容器的功能扩展
+
+Spring提供了一个接口ApplicationContext，用于扩展BeanFactory中现有的功能。ApplicationContext提供了更多的扩展功能，即：ApplicationContext包含BeanFactory的所有功能。
+
+## 6.2 扩展功能
+
+设置了路径之后，便可以根据路径做配置文件的解析以及各种功能的实现了。在AbstractApplicationContext#refresh()函数中包含了几乎ApplicationContext中提供的全部功能，而且此函数中逻辑清晰明了：
+
+```java
+public void refresh() throws BeansException, IllegalStateException {
+    synchronized (this.startupShutdownMonitor) {
+        // 准备刷新上下文环境
+        prepareRefresh();
+        // 初始化BeanFactory，并进行XML文件读取
+        ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+        // 对BeanFactory进行各种功能填充
+        prepareBeanFactory(beanFactory);
+        try {
+            // 子类覆盖方法做额外的处理
+            postProcessBeanFactory(beanFactory);
+            // 激活各种BeanFactory处理器
+            invokeBeanFactoryPostProcessors(beanFactory);
+            // 注册拦截bean，创建bean处理器，这里只是注册，真正的调用是在getBean时候
+            registerBeanPostProcessors(beanFactory);
+            // 为上下文初始化Message源，即不同语言的消息体，国际化处理
+            initMessageSource();
+            // 初始化应用消息广播器，并放入"applicationEventMulticaster"bean中
+            initApplicationEventMulticaster();
+            // 留给子类来初始化其他的bean
+            onRefresh();
+            // 在所有注册的bean中查找Listener bean，注册到消息广播器中
+            registerListeners();
+            // 初始化剩下的单实例（非惰性的）
+            finishBeanFactoryInitialization(beanFactory);
+            // 完成刷新过程，通过生命周期处理器lifecycleProcessor刷新过程，同时发出
+            // ContextRefreshEvent通知别人
+            finishRefresh();
+        } catch (BeansException ex) {
+            // 销毁已经创建的单例bean
+            destroyBeans();
+            // Reset 'active' flag.
+            cancelRefresh(ex);
+            throw ex;
+        } finally {
+            resetCommonCaches();
+        }
+    }
+}
+```
+
+概括ClassPathXmlApplicationContext初始化的步骤：
+
+（1）初始化前的准备工作，如：对系统属性或者环境变量进行准备及验证。
+
+在某些情况下，项目的使用需要读取某些系统变量，而这个变量的设置很可能会影响着系统的正确性，那么这个初始化前的准备工作就显得非常必要，它可以在Spring启动的时候提前对必须的变量进行存在性校验。
+
+（2）初始化BeanFactory，并进行XML文件读取。
+
+（3）对BeanFactory进行各种功能填充。
+
+（4）子类覆盖方法做额外的处理。
+
+（5）激活各种BeanFactory处理器。
+
+（6）注册拦截bean创建的bean处理器，这里只是注册，真正的调用是在getBean时候。
+
+（7）为上下文初始化Message源，即对不同语言的消息体进行国际化处理。
+
+（8）初始化应用消息广播器，并放入“applicationEventMulticaster”bean中。
+
+（9）留给子类来初始化其他的bean。
+
+（10）在所有注册的bean中查找listener bean，注册到消息广播器中。
+
+（11）初始化剩下的单实例（非惰性的）。
+
+（12）完成刷新过程，通知生命周期处理器lifeProcessor刷新过程，同时发出ContextRefreshEvent通知别人。
+
+## 6.3 环境准备
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
