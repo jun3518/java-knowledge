@@ -593,6 +593,8 @@ public BeanDefinition parseCustomElement(Element ele, BeanDefinition containingB
 
 # 第5章 bean的加载
 
+bean的加载入口为：AbstractBeanFactory#getBean(String)：
+
 ```java
 protected <T> T doGetBean( final String name, final Class<T> requiredType, 
                   final Object[] args, boolean typeCheckOnly)throws BeansException {
@@ -600,7 +602,7 @@ protected <T> T doGetBean( final String name, final Class<T> requiredType,
     final String beanName = transformedBeanName(name);
     Object bean;
     /*
-    检查缓存中或者实例工厂中是否有对应的实例。因为在创建单例bean嘚瑟会后会存在依赖注入的情况，而在创建
+    检查缓存中或者实例工厂中是否有对应的实例。因为在创建单例bean的时候会后会存在依赖注入的情况，而在创建
     依赖的时候为了避免循环依赖，Spring创建bean的原则是不等bean创建完成就会将创建bean的ObjectFactory
     提早暴露，也就是将ObjectFactory加入到缓存中，一旦下个bean创建时候需要依赖上个bean，则直接使用
     ObjectFactory
@@ -774,6 +776,7 @@ public interface FactoryBean<T> {
 单例在Spring的同一个容器中只会被创建一次，后续再获取bean直接从单例缓存中获取。当然这里也只是尝试加载，首先尝试从缓存中加载，然后再次尝试从singletonFactories中加载。因为在创建单例bean的时候，会存在依赖注入的情况，而在创建依赖的时候为了避免循环依赖，Spring创建bean的原则是不等bean创建完成就会创建bean的ObjectFactory提早曝光加入到缓存中，一旦下一个bean创建时需要依赖上个bean，则直接使用ObjectFactory。
 
 ```java
+// DefaultSingletonBeanRegistry#getSingleton(java.lang.String, boolean)
 protected Object getSingleton(String beanName, boolean allowEarlyReference) {
     // 检查缓存中是否存在实例
     Object singletonObject = this.singletonObjects.get(beanName);
@@ -820,6 +823,7 @@ getObjectForBeanInstance方法用于检测当前bean是否是FactoryBean类型�
 无论是从缓存中获取到的bean还是通过不同的scope策略加载的bean，都只是最原始的bean状态，并不一定是最终想要的bean。
 
 ```java
+//AbstractBeanFactory.getObjectForBeanInstance(Object,String, String,RootBeanDefinition)
 protected Object getObjectForBeanInstance(
 			Object beanInstance, String name, String beanName, RootBeanDefinition mbd) {
     // 如果指定的name是工厂相关（以&为前缀）且beanInstance又不是FactoryBean类型，则验证不通过
