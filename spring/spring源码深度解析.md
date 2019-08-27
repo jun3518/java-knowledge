@@ -814,7 +814,7 @@ protected Object getSingleton(String beanName, boolean allowEarlyReference) {
 
 （3）earlySingletonObjects：保存BeanName和创建bean实例之间的关系，与singletonObjects的不同之处在于，当一个单例bean被放到这里面后，那么当bean还在创建过程中，就可以通过getBean方法获取到，其目的是用来检测循环引用。
 
-（4）registerSingletons：用来保存当前所有已注册的bean。
+（4）registerSingletons：用来保存当前所有已注册的bean。（Set，保存beanName）
 
 ## 5.3 从bean的实例中获取对象
 
@@ -871,6 +871,7 @@ protected Object getObjectForBeanInstance(
 （4）将Factory中解析bean的工作委托给getObjectFromFactoryBean。
 
 ```java
+// FactoryBeanRegistrySupport#getObjectFromFactoryBean(FactoryBean,String, boolean)
 protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanName, 
                                           boolean shouldPostProcess) {
     // 如果是单例模式
@@ -902,6 +903,7 @@ protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanNam
     }
 }
 
+// doGetObjectFromFactoryBean(final FactoryBean<?> factory, final String beanName)
 private Object doGetObjectFromFactoryBean(final FactoryBean<?> factory, 
            						final String beanName) throws BeanCreationException {
     Object object;
@@ -954,6 +956,7 @@ public Object applyBeanPostProcessorsAfterInitialization(Object existingBean,
 如果缓存中不存在已经加载的单例bean，就需要从头开始bean的加载过程。Spring中使用getSingleton的重载方法实现bean的加载过程：
 
 ```java
+// DefaultSingletonBeanRegistry#getSingleton(String, ObjectFactory<?>)
 public Object getSingleton(String beanName, ObjectFactory<?> singletonFactory) {
     // 全局变量需要同步
 	synchronized (this.singletonObjects) {
@@ -1210,6 +1213,19 @@ Spring容器将每一个正在创建的bean标识符放在一个“当前创建b
 （3）Spring容器创建“testC”bean，首先去“当前创建bean池”查找是否当前bean正在创建，如果没发现， 则继续准备其需要的构造器参数“testA”，并将“testC”标识符放到“当前创建bean池”。
 
 （4）到止为止Spring容器要去创建“testA”bean，发现该bean标识符在“当前创建bean池”中，因为表示循环依赖，抛出BeanCurrentlyIncreationException。
+
+注：“当前创建bean池”逻辑如下：
+
+```java
+protected void beforeSingletonCreation(String beanName) {
+    if (!this.inCreationCheckExclusions.contains(beanName) && 
+        !this.singletonsCurrentlyInCreation.add(beanName)) {
+        throw new BeanCurrentlyInCreationException(beanName);
+    }
+}
+```
+
+如果this.singletonsCurrentlyInCreation.add(beanName)=false，即：已经存在了beanName，则会抛出异常。
 
 #### 2. setter循环依赖
 
@@ -1682,7 +1698,7 @@ bf.setAllowBeanDefinitionOverriding(false);
 
 （4）isSingletonCurrentlyInCreation(beanName)：该bean是否在创建中。在Spring中，会有个专门的属性默认为DefaultSingleBeanRegistry是singletonCurrentlyInCreation来记录bean的加载状态，在bean开始创建前会将beanName记录在属性中，在bean创建结束后会将beanName从属性中移除。在singleton下记录属性的函数是在DefaultSingleBeanRegistry的getSingleton(String beanName, ObjectFactory<?> singletonFactory)函数的beforeSingletonCreation(beanName)和afterSingletonCreation(beanName)中，在这两段函数中分别this.inCreationCheckExclusions.contains(beanName)与this.inCreationCheckExclusions.contains(beanName)来进行状态的记录与移除。
 
-当这3个条件都满足时，汇之星addSingletonFactory操作。
+当这3个条件都满足时，会执行addSingletonFactory操作。
 
 那么加入SingletonFactory的作用是什么，又在什么时候调用呢？
 
