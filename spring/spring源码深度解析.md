@@ -2192,15 +2192,524 @@ public void refresh() throws BeansException, IllegalStateException {
 
 ## 6.3 环境准备
 
+AbstractApplicationContext#prepareRefresh()函数主要是做准备工作，如：对系统属性及环境变量的初始化及验证。
 
+```java
+protected void prepareRefresh() {
+    this.startupDate = System.currentTimeMillis();
+    // 留给子类覆盖
+    initPropertySources();
+    // 验证需要的属性文件是否都已经放入环境中
+    getEnvironment().validateRequiredProperties();
+    this.earlyApplicationEvents = new LinkedHashSet<ApplicationEvent>();
+}
+```
 
+## 6.4 加载BeanFactory
 
+```java
+protected ConfigurableListableBeanFactory obtainFreshBeanFactory() {
+    refreshBeanFactory();
+    // 返回当前实体的beanFactory属性
+    ConfigurableListableBeanFactory beanFactory = getBeanFactory();
+    return beanFactory;
+}
+```
 
+方法中将核心实现委托给了refreshBeanFactory方法：
 
+```java
+protected final void refreshBeanFactory() throws BeansException {
+    if (hasBeanFactory()) {
+        destroyBeans();
+        closeBeanFactory();
+    }
+    try {
+        // 创建DefaultListableBeanFactory
+        DefaultListableBeanFactory beanFactory = createBeanFactory();
+        // 为了序列化指定id，如果需要的话，让这个BeanFactory从id反序列化到BeanFactory对象
+        beanFactory.setSerializationId(getId());
+        // 定制BeanFactory设置相关属性，包括是否允许覆盖同名称的不同定义的对象以及循环依赖以及
+        // 设置@Autowired和@Qualifer注解器QualiferAnnotationAutowireCandidateResolver
+        customizeBeanFactory(beanFactory);
+        // 初始化DocumentReader，并进行XML文件读取及解析
+        loadBeanDefinitions(beanFactory);
+        synchronized (this.beanFactoryMonitor) {
+            this.beanFactory = beanFactory;
+        }
+    }
+    catch (IOException ex) {
+        throw new ApplicationContextException("...");
+    }
+}
+```
 
+上述代码的步骤的功能如下：
 
+（1）创建DefaultListableBeanFactory。
 
+DefaultListableBeanFactory是容器的基础。这里是实例化DefaultListableBeanFactory的步骤。
 
+（2）指定序列化ID。
+
+（3）定制BeanFactory。
+
+（4）加载BeanDefinition。
+
+（5）使用全局变量记录BeanFactory类实例。
+
+### 6.4.1 定制BeanFactory
+
+在基本容器的基础上，增加了是否允许覆盖、是否允许扩展的设置。
+
+```java
+protected void customizeBeanFactory(DefaultListableBeanFactory beanFactory) {
+    //如果属性allowBeanDefinitionOverride不为空，设置给beanFactory对象相应的属性，此属性的含义是：
+    // 是否允许覆盖同名的不同意义的对象
+    if (this.allowBeanDefinitionOverriding != null) {
+        beanFactory.setAllowBeanDefinitionOverriding(this.allowBeanDefinitionOverriding);
+    }
+    // 如果属性allowCircularReferences不为空，设置给beanFactory对象相应属性，此属性的含义：
+    // 是否允许bean之间存在循环依赖
+    if (this.allowCircularReferences != null) {
+        beanFactory.setAllowCircularReferences(this.allowCircularReferences);
+    }
+}
+```
+
+### 6.4.2 加载BeanDefinition
+
+```java
+protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+    // 指定beanFactory创建XmlBeanDefinitionReader
+    XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+
+    // 对beanDefinitionReader进行环境变量的设置
+    beanDefinitionReader.setEnvironment(this.getEnvironment());
+    beanDefinitionReader.setResourceLoader(this);
+    beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+
+    // 对BeanDefinitionReader进行设置，可以覆盖
+    initBeanDefinitionReader(beanDefinitionReader);
+    // 配置文件的读取
+    loadBeanDefinitions(beanDefinitionReader);
+}
+```
+
+在初始化了DefaultListableBeanFactory和XMLBeanDefinitionReader后就可以进行配置文件的读取了。
+
+```java
+protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) 
+    throws BeansException, IOException {
+    Resource[] configResources = getConfigResources();
+    if (configResources != null) {
+        reader.loadBeanDefinitions(configResources);
+    }
+    String[] configLocations = getConfigLocations();
+    if (configLocations != null) {
+        reader.loadBeanDefinitions(configLocations);
+    }
+}
+```
+
+在XMLBeanDefinitionReader初始化的时候，就已经将DefaultListableBeanFactory注册了，所以XMLBeanDefinitionReader所读取的BeanDefinitionHolder都会注册到DefaultListableBeanFactory中。经过此步骤，类型DefaultListableBeanFactory的变量beanFactory已经包含了所有解析好的配置。
+
+## 6.5 功能扩展
+
+执行完obtainFreshBeanFactory方法后，Spring已经完成了对配置的解析，而ApplicationContext在功能上的扩展也由此展开：
+
+```java
+protected void prepareBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+	// 设置beanFactory的ClassLoader为当前context的classLoader
+    beanFactory.setBeanClassLoader(getClassLoader());
+    // 设置beanFactory的表达式语言处理器，默认可以使用#{xxx}的形式来调用相关属性值。
+    beanFactory.setBeanExpressionResolver(
+        new StandardBeanExpressionResolver(beanFactory.getBeanClassLoader()));
+    // 为beanFactory增加一个默认的propertyEditor主要是对bean的属性设置管理的一个工具
+    beanFactory.addPropertyEditorRegistrar(
+        new ResourceEditorRegistrar(this, getEnvironment()));
+    // 添加BeanPostProcessor
+    beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this));
+    // 设置了几个忽略自动装配的接口
+    beanFactory.ignoreDependencyInterface(EnvironmentAware.class);
+    beanFactory.ignoreDependencyInterface(EmbeddedValueResolverAware.class);
+    beanFactory.ignoreDependencyInterface(ResourceLoaderAware.class);
+    beanFactory.ignoreDependencyInterface(ApplicationEventPublisherAware.class);
+    beanFactory.ignoreDependencyInterface(MessageSourceAware.class);
+    beanFactory.ignoreDependencyInterface(ApplicationContextAware.class);
+    // 设置了几个自动装配的特殊规则
+    beanFactory.registerResolvableDependency(BeanFactory.class, beanFactory);
+    beanFactory.registerResolvableDependency(ResourceLoader.class, this);
+    beanFactory.registerResolvableDependency(ApplicationEventPublisher.class, this);
+    beanFactory.registerResolvableDependency(ApplicationContext.class, this);
+    
+    beanFactory.addBeanPostProcessor(new ApplicationListenerDetector(this));
+    
+    // 增加对AspectJ的支持
+    if (beanFactory.containsBean(LOAD_TIME_WEAVER_BEAN_NAME)) {
+        beanFactory.addBeanPostProcessor(new LoadTimeWeaverAwareProcessor(beanFactory));
+        beanFactory.setTempClassLoader(
+            new ContextTypeMatchClassLoader(beanFactory.getBeanClassLoader()));
+    }
+    // 添加默认的系统环境bean
+    if (!beanFactory.containsLocalBean(ENVIRONMENT_BEAN_NAME)) {
+        beanFactory.registerSingleton(ENVIRONMENT_BEAN_NAME, getEnvironment());
+    }
+    if (!beanFactory.containsLocalBean(SYSTEM_PROPERTIES_BEAN_NAME)) {
+        beanFactory.registerSingleton(SYSTEM_PROPERTIES_BEAN_NAME, 
+                                      getEnvironment().getSystemProperties());
+    }
+    if (!beanFactory.containsLocalBean(SYSTEM_ENVIRONMENT_BEAN_NAME)) {
+        beanFactory.registerSingleton(SYSTEM_ENVIRONMENT_BEAN_NAME, 
+                                      getEnvironment().getSystemEnvironment());
+    }
+}
+```
+
+上面的代码主要进行了几个方面的扩展：
+
+（1）增加对SpEL语言的支持。
+
+（2）增加对属性编辑器的支持。
+
+（3）增加对一些内置类，如EnvironmentAware、MessageSourceAware的信息注入。
+
+（4）设置了依赖功能可忽略的接口。
+
+（5）注册一些固定的依赖的属性。
+
+（6）增加AspectJ的支持。
+
+（7）将相关环境变量及属性注册以单例模式注册。
+
+### 6.5.1 增加SpEL语言的支持
+
+通过代码beanFactory.setBeanExpressionResolver(new StandardBeanExpressionResolver())注册语言解析器，就可以对SpEL进行解析了。
+
+那么在注册解析器后Spring又是在什么时候调用这个解析器进行解析呢？
+
+Spring在bean进行初始化的时候会有属性填充的步骤，而在这一步中Spring会调用AbstractAutowireCapableBeanFactory类的applyPropertyValues函数来完成功能。就在这个函数中，会通过构造BeanDefinitionValueResolver类型实例valueResolver来进行属性值的解析。同时也是在这个步骤中一般通过AbstractBeanFactory中的evaluateBeanDefinitionString方法去完成SpEL的解析。
+
+```java
+protected Object evaluateBeanDefinitionString(String value, BeanDefinition beanDefinition) {
+    if (this.beanExpressionResolver == null) {
+        return value;
+    }
+    Scope scope = (beanDefinition != null ? 
+                   getRegisteredScope(beanDefinition.getScope()) : null);
+    return this.beanExpressionResolver.evaluate(value, 
+                                                new BeanExpressionContext(this, scope));
+}
+```
+
+当调用这个方法时会判断是否存在语言解析器，如果存在则调用语言解析器的方法进行解析，解析的过程是在Spring的expression的包内。evaluateBeanDefinitionString方法的调用层次可以看出，应用语言解析器的调用主要是在解析依赖注入bean的时候，以及在完成bean的初始化和属性获取后进行属性填充的时候。
+
+### 6.5.2 增加属性注册编辑器
+
+Spring在DI注入的时候，可以对普通属性进行注入。但是对于像Date类型就无法识别，因为date属性是Date类型，而在XML中却是String类型的，所以会报类型转换异常。
+
+Spring对此问题提供了两种解决办法。
+
+#### 1. 使用自定义属性编辑器
+
+使用自定义属性编辑器，荣光继承PropertyEditorSupport，重写setAsText方法：
+
+（1）编写自定义属性编辑器：
+
+```java
+public class MyDatePropertyEditor extends PropertyEditorSupport {
+
+	private String format;
+
+	public void setFormat(String format) {
+		this.format = format;
+	}
+
+	@Override
+	public void setAsText(String text) throws IllegalArgumentException {
+		SimpleDateFormat sdf = new SimpleDateFormat(format);
+		try {
+			Date date = sdf.parse(text);
+			this.setValue(date);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+	}
+}
+```
+
+（2）将自定义属性编辑器注册到Spring中：
+
+```xml
+<bean class="org.springframework.beans.factory.config.CustomEditorConfigurer">
+    <property name="customEditors">
+        <map>
+            <entry key="java.util.Date">
+                <bean class="com.test.MyDatePropertyEditor">
+                    <property name="format" value="yyyy-MM-dd"/>
+                </bean>
+            </entry>
+        </map>
+    </property>
+</bean>
+```
+
+在配置文件中引入类型为CustomEditorConfigurer的bean，并在属性customEditors中加入自定义的属性编辑器，其中key为属性编辑器所对应的类型，通过这样的配置，当Spring在注入bean的时候，一旦遇到了java.util.Date类型的属性会自动调用自定义的DatePropertyEditor解析器进行解析，并用解析结果代替属性进行注入。
+
+#### 2. 注册Spring自带的属性编辑器CustomDateEditor
+
+通过注册Spring自带的属性编辑器CustomDateEditor：
+
+（1）定义属性编辑器：
+
+```java
+public class DatePropertyEditorRegister implements PropertyEditorRegistrar {
+
+    @Override
+    public void registerCustomEditors(PropertyEditorRegistry registry) {
+        registry.registerCustomEditor(Date.class, new CustomDateEditor(
+            new SimpleDateFormat("yyyy-MM-dd"), true));
+    }
+}
+```
+
+（2）注册到Spring中：  	
+
+```xml
+<bean class="org.springframework.beans.factory.config.CustomEditorConfigurer">
+    	<property name="propertyEditorRegistrars">
+    		<list>
+    			<bean class="com.test.DatePropertyEditorRegister"/>
+    		</list>
+    	</property>
+<bean/>  
+```
+
+通过在配置文件中将自定义的DatePropertyEditorRegister注册进入CustomEditorConfigurer的propertyEditorRegistrars属性中，可以具有与方式1同样的效果。
+
+在注册自定义属性编辑器的时候，使用的是PropertyEditorRegistry的registerCustomEditor方法。在AbstractApplicationContext#prepareBeanFactory方法中，为beanFactory增加一个默认的propertyEditor主要是对bean的属性设置管理的一个工具：
+
+```java
+beanFactory.addPropertyEditorRegistrar(new ResourceEditorRegistrar(this, 
+                                                                   getEnvironment()));
+```
+
+进入ResourceEditorRegistrar#registerCustomEditor方法的内部实现了解实现原理：
+
+```java
+public void registerCustomEditors(PropertyEditorRegistry registry) {
+    ResourceEditor baseEditor = new ResourceEditor(this.resourceLoader, 
+                                                   this.propertyResolver);
+    doRegisterEditor(registry, Resource.class, baseEditor);
+    doRegisterEditor(registry, ContextResource.class, baseEditor);
+    doRegisterEditor(registry, InputStream.class, new InputStreamEditor(baseEditor));
+    doRegisterEditor(registry, InputSource.class, new InputSourceEditor(baseEditor));
+    doRegisterEditor(registry, File.class, new FileEditor(baseEditor));
+    if (pathClass != null) {
+        doRegisterEditor(registry, pathClass, new PathEditor(baseEditor));
+    }
+    doRegisterEditor(registry, Reader.class, new ReaderEditor(baseEditor));
+    doRegisterEditor(registry, URL.class, new URLEditor(baseEditor));
+
+    ClassLoader classLoader = this.resourceLoader.getClassLoader();
+    doRegisterEditor(registry, URI.class, new URIEditor(classLoader));
+    doRegisterEditor(registry, Class.class, new ClassEditor(classLoader));
+    doRegisterEditor(registry, Class[].class, new ClassArrayEditor(classLoader));
+
+    if (this.resourceLoader instanceof ResourcePatternResolver) {
+        doRegisterEditor(registry, Resource[].class,
+         new ResourceArrayPropertyEditor((ResourcePatternResolver) this.resourceLoader, 
+                                                 	this.propertyResolver));
+    }
+    private void doRegisterEditor(PropertyEditorRegistry registry, Class<?> requiredType,
+                                  PropertyEditor editor) {
+		if (registry instanceof PropertyEditorRegistrySupport) {
+			((PropertyEditorRegistrySupport) registry).overrideDefaultEditor(
+                requiredType, editor);
+		} else {
+			registry.registerCustomEditor(requiredType, editor);
+		}
+	}
+}
+```
+
+在doRegisterEditor函数中，可以看到在之前提到的自定义属性中使用的关键代码：
+
+```java
+registry.registerCustomEditor(requiredType, editor);
+```
+
+ResourceEditorRegistrar#registerCustomEditor方法的核心功能，无非是注册一系列的常用类型属性编辑器，如：ResourceEditorRegistrar#doRegisterEditor实现的功能就是注册Class类对应的属性编辑器。注册后，一旦某个实体bean中存在一些Class类型的属性，那么Spring会调用ClassEditor将配置中心定义的String类型转换为Class类型并进行赋值。
+
+虽说ResourceEditorRegister类的registerCustomEditors方法实现了批量注册的功能，但是beanFactory.addPropertyEditorRegistrar(new ResourceEditorRegistrar(this, getEnvironment()))仅仅是注册了ResourceEditorRegistrar实例，却没有调用ResourceEditorRegistrar的registerCustomEditors方法进行注册，那么到底是在什么时候进行注册呢？
+
+在AbstractBeanFactory#initBeanWrapper方法中，可以看到会调用AbstractBeanFactory#registerCustomEditors方法，即：在bean的初始化后会调用ResourceEditorRegistrar#registerCustomEditors方法进行批量的通用属性编辑器注册。注册后，在属性填充的环节便可以直接让Spring使用这些编辑器进行属性的解析了。
+
+Spring用于封装bean的是BeanWrapper类型，而它又间接继承了PropertyEditorRegistry类型，即：registerCustomEditors(PropertyEditorRegistry registry)中的PropertyEditorRegistry registry。BeanWrapper的默认实现是BeanWrapperImpl，而BeanWrapper除了实现BeanWrapper接口外，还继承了PropertyEditorRegistrySupport。在PropertyEditorRegistrySupport中有这样一个方法：
+
+```java
+private void createDefaultEditors() {
+    this.defaultEditors = new HashMap<Class<?>, PropertyEditor>(64);
+
+    this.defaultEditors.put(Charset.class, new CharsetEditor());
+    this.defaultEditors.put(Class.class, new ClassEditor());
+    this.defaultEditors.put(Class[].class, new ClassArrayEditor());
+    this.defaultEditors.put(Currency.class, new CurrencyEditor());
+    this.defaultEditors.put(File.class, new FileEditor());
+    this.defaultEditors.put(InputStream.class, new InputStreamEditor());
+    this.defaultEditors.put(InputSource.class, new InputSourceEditor());
+    this.defaultEditors.put(Locale.class, new LocaleEditor());
+    if (pathClass != null) {
+        this.defaultEditors.put(pathClass, new PathEditor());
+    }
+    this.defaultEditors.put(Pattern.class, new PatternEditor());
+    this.defaultEditors.put(Properties.class, new PropertiesEditor());
+    this.defaultEditors.put(Reader.class, new ReaderEditor());
+    this.defaultEditors.put(Resource[].class, new ResourceArrayPropertyEditor());
+    this.defaultEditors.put(TimeZone.class, new TimeZoneEditor());
+    this.defaultEditors.put(URI.class, new URIEditor());
+    this.defaultEditors.put(URL.class, new URLEditor());
+    this.defaultEditors.put(UUID.class, new UUIDEditor());
+    if (zoneIdClass != null) {
+        this.defaultEditors.put(zoneIdClass, new ZoneIdEditor());
+    }
+    this.defaultEditors.put(Collection.class, new CustomCollectionEditor(Collection.class));
+    this.defaultEditors.put(Set.class, new CustomCollectionEditor(Set.class));
+    this.defaultEditors.put(SortedSet.class, new CustomCollectionEditor(SortedSet.class));
+    this.defaultEditors.put(List.class, new CustomCollectionEditor(List.class));
+    this.defaultEditors.put(SortedMap.class, new CustomMapEditor(SortedMap.class));
+    
+    this.defaultEditors.put(byte[].class, new ByteArrayPropertyEditor());
+    this.defaultEditors.put(char[].class, new CharArrayPropertyEditor());
+
+    this.defaultEditors.put(char.class, new CharacterEditor(false));
+    this.defaultEditors.put(Character.class, new CharacterEditor(true));
+
+    this.defaultEditors.put(boolean.class, new CustomBooleanEditor(false));
+    this.defaultEditors.put(Boolean.class, new CustomBooleanEditor(true));
+
+    this.defaultEditors.put(byte.class, new CustomNumberEditor(Byte.class, false));
+    this.defaultEditors.put(Byte.class, new CustomNumberEditor(Byte.class, true));
+    this.defaultEditors.put(short.class, new CustomNumberEditor(Short.class, false));
+    this.defaultEditors.put(Short.class, new CustomNumberEditor(Short.class, true));
+    this.defaultEditors.put(int.class, new CustomNumberEditor(Integer.class, false));
+    this.defaultEditors.put(Integer.class, new CustomNumberEditor(Integer.class, true));
+    this.defaultEditors.put(long.class, new CustomNumberEditor(Long.class, false));
+    this.defaultEditors.put(Long.class, new CustomNumberEditor(Long.class, true));
+    this.defaultEditors.put(float.class, new CustomNumberEditor(Float.class, false));
+    this.defaultEditors.put(Float.class, new CustomNumberEditor(Float.class, true));
+    this.defaultEditors.put(double.class, new CustomNumberEditor(Double.class, false));
+    this.defaultEditors.put(Double.class, new CustomNumberEditor(Double.class, true));
+    this.defaultEditors.put(BigDecimal.class, new CustomNumberEditor(BigDecimal.class, true));
+    this.defaultEditors.put(BigInteger.class, new CustomNumberEditor(BigInteger.class, true));
+
+    if (this.configValueEditorsActive) {
+        StringArrayPropertyEditor sae = new StringArrayPropertyEditor();
+        this.defaultEditors.put(String[].class, sae);
+        this.defaultEditors.put(short[].class, sae);
+        this.defaultEditors.put(int[].class, sae);
+        this.defaultEditors.put(long[].class, sae);
+    }
+}
+```
+
+通过这个方法，在Spring中定义了上面一系列常用的属性编辑器可以方便地进行配置。如果定义的bean中的某个属性的类型不在上面的常用配置，才需要进行个性化属性编辑器的注册。
+
+### 6.5.3 添加ApplicationContextAwareProcessor处理器
+
+对于beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this))，其主要目的就是注册个BeanPostProcessor，而真正的逻辑还是在ApplicationContextAwareProcessor中。
+
+ApplicationContextAwareProcessor实现BeanPostProcessor。实现此接口的bean会在Spring激活bean的init-method的前后，会调用BeanPostProcessor的postProcessBeforeInitialization方法和postProcessAfterInitialization方法。
+
+其中postProcessBeforeInitialization方法做了业务处理：
+
+```java
+public Object postProcessBeforeInitialization(final Object bean, String beanName) 
+    throws BeansException {
+    AccessControlContext acc = null;
+    if (System.getSecurityManager() != null &&
+        (bean instanceof EnvironmentAware || 
+         bean instanceof EmbeddedValueResolverAware ||
+         bean instanceof ResourceLoaderAware || 
+         bean instanceof ApplicationEventPublisherAware ||
+         bean instanceof MessageSourceAware || 
+         bean instanceof ApplicationContextAware)) {
+        acc = this.applicationContext.getBeanFactory().getAccessControlContext();
+    }
+    if (acc != null) {
+        AccessController.doPrivileged(new PrivilegedAction<Object>() {
+            @Override
+            public Object run() {
+                invokeAwareInterfaces(bean);
+                return null;
+            }
+        }, acc);
+    } else {
+        invokeAwareInterfaces(bean);
+    }
+
+    return bean;
+}
+
+private void invokeAwareInterfaces(Object bean) {
+    if (bean instanceof Aware) {
+        if (bean instanceof EnvironmentAware) {
+            ((EnvironmentAware) bean)
+            .setEnvironment(this.applicationContext.getEnvironment());
+        }
+        if (bean instanceof EmbeddedValueResolverAware) {
+            ((EmbeddedValueResolverAware) bean).
+                setEmbeddedValueResolver(this.embeddedValueResolver);
+        }
+        if (bean instanceof ResourceLoaderAware) {
+            ((ResourceLoaderAware) bean).setResourceLoader(this.applicationContext);
+        }
+        if (bean instanceof ApplicationEventPublisherAware) {
+            ((ApplicationEventPublisherAware) bean).
+                setApplicationEventPublisher(this.applicationContext);
+        }
+        if (bean instanceof MessageSourceAware) {
+            ((MessageSourceAware) bean).setMessageSource(this.applicationContext);
+        }
+        if (bean instanceof ApplicationContextAware) {
+            ((ApplicationContextAware) bean).
+                setApplicationContext(this.applicationContext);
+        }
+    }
+}
+```
+
+postProcessBeforeInitialization方法调用的invokeAwareInterfaces方法中，对bean在初始化后，可以取得一些对应的资源。
+
+### 6.5.4 设置忽略依赖
+
+当Spring将ApplicationContextAwareProcessor注册后，那么在invokeAwareInterfaces方法中间调用的Aware类已经不是普通的bean了，如：ResourceLoaderAware等，那么需要在Spring做bean的依赖注入的时候忽略他们。而ignoreDependencyInterface的作用正式如此：
+
+```java
+beanFactory.ignoreDependencyInterface(EnvironmentAware.class);
+beanFactory.ignoreDependencyInterface(EmbeddedValueResolverAware.class);
+beanFactory.ignoreDependencyInterface(ResourceLoaderAware.class);
+beanFactory.ignoreDependencyInterface(ApplicationEventPublisherAware.class);
+beanFactory.ignoreDependencyInterface(MessageSourceAware.class);
+beanFactory.ignoreDependencyInterface(ApplicationContextAware.class);
+```
+
+### 6.5.5 注册依赖
+
+Spring中有了忽略依赖的功能，当然也必不可少地会有注册依赖的功能：
+
+```java
+beanFactory.registerResolvableDependency(BeanFactory.class, beanFactory);
+beanFactory.registerResolvableDependency(ResourceLoader.class, this);
+beanFactory.registerResolvableDependency(ApplicationEventPublisher.class, this);
+beanFactory.registerResolvableDependency(ApplicationContext.class, this);
+```
+
+当注册了依赖解析后，如：当注册了对BeanFactory.class的解析依赖后，当bean的属性注入的时候，一旦检测到属性为BeanFactory类便会将beanFactory的实例注入进去。
+
+## 6.6 BeanFactory的后处理
+
+P158
 
 
 
