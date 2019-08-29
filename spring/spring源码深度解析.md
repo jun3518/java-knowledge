@@ -2709,7 +2709,90 @@ beanFactory.registerResolvableDependency(ApplicationContext.class, this);
 
 ## 6.6 BeanFactory的后处理
 
-P158
+### 6.6.1 激活注册的BeanFactoryPostProcessor
+
+BeanFactoryPostProcessor接口跟BeanPostProcessor类似，可以对bean的定义（配置元数据）进行处理。Spring IoC容器允许BeanFactoryPostProcessor在容器实际实例化任何其他的bean之前读取配置元数据，并可能修改它。
+
+如果想改变实际的bean实例，那么最好使用BeanPostProcessor。同样，BeanFactoryPostProcessor的作用域是容器级的，它之和所使用的容器有关。如果在容器中定义一个BeanFactoryPostProcessor，它仅仅对此容器中的bean进行后置处理。BeanFactoryPostProcessor不会对定义在另一个容器的bean进行后置处理，即使这两个容器都是在同一层次上。
+
+#### 1. BeanFactoryPostProcessor的典型应用：PropertyPlaceholderConfigurer
+
+```xml
+<bean id="message" class="bean.HelloMessage">
+	<property name="mes">
+    	<value>${bean.message}</value>
+    </property>
+</bean>
+```
+
+对于${bean.message}，Spring会在配置文件中查询key为bean.message的指定值如bean.message=Hi,Can you find me?，然后将指定值替换${bean.message}为Hi,Can you find me?。当访问名为message的bean时，mes属性就会被置为字符串“Hi,Can you find me?”，但Spring框架是怎么知道存在这样的配置呢？这就要靠PropertyPlaceholderConfigurer这个类：
+
+```xml
+<bean class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
+    <property name="locations">
+        <list>
+            <value>config/message.properties</value>
+        </list>
+    </property>
+</bean>
+```
+
+PropertyPlaceholderConfigurer间接继承了BeanFactoryPostProcessor接口，Spring加载任何实现了这个接口的bean的配置时，都会在bean工厂载入所有bean的配置之后执行PropertyResourceConfigurer#postProcessBeanFactory方法：
+
+```java
+public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) 
+    throws BeansException {
+    try {
+        Properties mergedProps = mergeProperties();
+        convertProperties(mergedProps);
+        processProperties(beanFactory, mergedProps);
+    }
+    catch (IOException ex) {
+        throw new BeanInitializationException("Could not load properties", ex);
+    }
+}
+```
+
+在此方法中先后调用了mergeProperties、convertProperties、processProperties这3个方法，分别得到配置，将得到的配置转换为合适的类型，字后将配置内容告知BeanFactory。
+
+正是通过实现BeanFactoryPostProcessor接口，BeanFactory会在实例化任何bean之前获得配置信息，从而能够正确解析bean描述文件中的变量引用。
+
+#### 2. 使用自定义BeanFactoryPostProcessor
+
+AbstractApplicationContext#invokeBeanFactoryPostProcessors
+
+```java
+public static void invokeBeanFactoryPostProcessors(
+			ConfigurableListableBeanFactory beanFactory, 
+    List<BeanFactoryPostProcessor> beanFactoryPostProcessors) {
+	Set<String> processedBeans = new HashSet<String>();
+	// 对BeanDefinitionRegistry类型的处理
+    if (beanFactory instanceof BeanDefinitionRegistry) {
+        BeanDefinitionRegistry registry = (BeanDefinitionRegistry) beanFactory;
+        List<BeanFactoryPostProcessor> regularPostProcessors = 
+            new LinkedList<BeanFactoryPostProcessor>();
+        List<BeanDefinitionRegistryPostProcessor> registryProcessors = 
+            new LinkedList<BeanDefinitionRegistryPostProcessor>();
+		// 硬编码注册的后处理器
+        for (BeanFactoryPostProcessor postProcessor : beanFactoryPostProcessors) {
+            if (postProcessor instanceof BeanDefinitionRegistryPostProcessor) {
+                BeanDefinitionRegistryPostProcessor registryProcessor =
+                    (BeanDefinitionRegistryPostProcessor) postProcessor;
+                // 对于BeanDefinitionRegistryPostProcessor类型，在BeanFactoryPostProcessor
+                // 的基础上还有自己定义的方法，需要先调用
+                registryProcessor.postProcessBeanDefinitionRegistry(registry);
+                registryProcessors.add(registryProcessor);
+            } else {
+                // 记录常规的BeanFactoryPostProcessor
+                regularPostProcessors.add(postProcessor);
+            }
+        }
+    }
+
+}
+```
+
+
 
 
 
