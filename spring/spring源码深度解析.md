@@ -3178,6 +3178,111 @@ protected void registerListeners() {
 }
 ```
 
+## 6.7 初始化非延迟加载单例
+
+在AbstractApplicationContext#finishBeanFactoryInitialization中完成BeanFactory的初始化工作，其中包括ConversionService的设置、配置冻结以及非延迟加载bean的初始化工作。
+
+```java
+protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+    if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &&
+        beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+        beanFactory.setConversionService(
+            beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+    }
+    if (!beanFactory.hasEmbeddedValueResolver()) {
+        beanFactory.addEmbeddedValueResolver(new StringValueResolver() {
+            @Override
+            public String resolveStringValue(String strVal) {
+                return getEnvironment().resolvePlaceholders(strVal);
+            }
+        });
+    }
+    String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+    for (String weaverAwareName : weaverAwareNames) {
+        getBean(weaverAwareName);
+    }
+    beanFactory.setTempClassLoader(null);
+    // 冻结所有的bean定义，说明注册的bean定义将不被修改或任何进一步的处理
+    beanFactory.freezeConfiguration();
+    // 初始化剩下的单实例（非惰性的）
+    beanFactory.preInstantiateSingletons();
+}
+```
+
+#### 1. ConversionService的设置
+
+除了自定义类型转换器从String转换为Date的方式，那么在Spring中还提供了另一种转换方式：使用Converter。
+
+（1）定义转换器：
+
+```java
+public class String2DateConverter implements Converter<String, Date> {
+
+	@Override
+	public Date convert(String source) {
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		try {
+			sdf.parse(source);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+}
+```
+
+（2）注册：
+
+```xml
+<!-- ConversionServiceFactoryBean的id必须为conversionService -->
+<bean id="conversionService" 
+      class="org.springframework.context.support.ConversionServiceFactoryBean">
+    <property name="converters">
+        <set>
+            <bean class="com.test.String2DateConverter"/>
+        </set>
+    </property>
+</bean>
+```
+
+#### 2. 冻结配置
+
+DefaultListableBeanFactory#freezeConfiguration方法将冻结所有的bean定义，说明注册的bean定义将不被修改或进行任何进一步的处理。
+
+```java
+public void freezeConfiguration() {
+    this.configurationFrozen = true;
+    this.frozenBeanDefinitionNames = StringUtils.toStringArray(this.beanDefinitionNames);
+}
+```
+
+#### 3. 初始化非延迟加载
+
+ApplicationContext实现的默认行为就是在启动时将所有单例bean提前进行实例化。提前实例化意味着作为初始化过程的一部分，ApplicationContext实例胡其创建并配置所有的单例bean。
+
+ConfigurableListableBeanFactory#preInstantiateSingletons方法进行初始化非延迟加载。
+
+## 6.8 finishRefresh
+
+在Spring中还提供了Lifecycle接口，Lifecycle中包含start/stop方法，实现此接口后Spring会保证在启动的时候调用其start方法开始生命手气，并在Spring关闭的时候调用stop方法来结束生命周期。
+
+AbstractApplicationContext#finishRefresh方法完成此功能的逻辑。
+
+```java
+protected void finishRefresh() {
+    // 当ApplicationContext启动或停止后，它会通过LifecycleProcessor来与所有生命的bean的周期做状态更新，而在LifecycleProcessor的使用前首先需要初始化。
+    initLifecycleProcessor();
+
+    // 启动所有实现了Lifecycle接口的bean
+    getLifecycleProcessor().onRefresh();
+
+    // 当完成ApplicationContext初始化的时候，要通过Spring中的事件发布机制来发出ContextRefreshedEvent，以保证对应的监听器可以做进一步的逻辑处理。
+    publishEvent(new ContextRefreshedEvent(this));
+}
+```
+
+# 第7章 AOP
+
 
 
 
