@@ -3283,7 +3283,331 @@ protected void finishRefresh() {
 
 # 第7章 AOP
 
+## 7.1 动态AOP使用示例
 
+（1）创建用于拦截的bean
+
+```java
+@Data
+public class TestBean {
+
+    private String testStr = "testStr";
+
+    public void test(){
+        System.out.println("test");
+    }
+}
+```
+
+（2）创建Advisor
+
+```java
+@Aspect
+public class AspectTest {
+
+	@Pointcut("execution(* *.test(..))")
+	public void test() {
+	}
+    
+	@Before("test()")
+	public void beforeTest() {
+		System.out.println("beforeTest");
+	}
+	
+	@After("test()")
+	public void afterTest() {
+		System.out.println("afterTest");
+	}
+	
+	@Around("test()")
+	public Object aroundTest(ProceedingJoinPoint point) throws Throwable {
+		System.out.println("aroundBeforeTest");
+		Object object = point.proceed();
+		System.out.println("aroundAfterTest");
+		return object;
+	}
+}
+```
+
+（3）创建配置文件
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:aop="http://www.springframework.org/schema/aop"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans 
+		http://www.springframework.org/schema/beans/spring-beans.xsd
+		http://www.springframework.org/schema/aop 
+		http://www.springframework.org/schema/aop/spring-aop-4.3.xsd">
+
+	<aop:aspectj-autoproxy/>
+
+	<bean id="testBean" class="beans.TestBean"/>
+	
+	<bean id="aspectTest" class="aspect.AspectTest"/>
+
+</beans>
+```
+
+（4）测试
+
+```java
+public class Test {
+
+	public static void main(String[] args) {
+		
+		ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("beans.xml");
+		
+		TestBean testBean = context.getBean("testBean", TestBean.class);
+		
+		testBean.test();
+	}
+}
+```
+
+在控制台打印：
+
+```java
+aroundBeforeTest
+beforeTest
+test
+aroundAfterTest
+afterTest
+```
+
+Spring是否支持注解的AOP是由一个配置文件控制的，即：\<aop:aspectj-autoproxy />，当在配置文件中声明了这句配置的时候，Spring就会支持注解AOP。
+
+## 7.2 动态AOP自定义标签
+
+\<aop:aspectj-autoproxy/>是一个自定义标签，所以在NamespaceHandler实现类中发现AopNamespaceHandler#init方法会对\<aop:aspectj-autoproxy/>自定义标签进行解析：
+
+```java
+public void init() {
+    this.registerBeanDefinitionParser("config", new ConfigBeanDefinitionParser());
+    this.registerBeanDefinitionParser("aspectj-autoproxy", 
+                                      new AspectJAutoProxyBeanDefinitionParser());
+    this.registerBeanDefinitionDecorator("scoped-proxy", 
+                                         new ScopedProxyBeanDefinitionDecorator());
+    this.registerBeanDefinitionParser("spring-configured", 
+                                      new SpringConfiguredBeanDefinitionParser());
+}
+```
+
+当解析配置文件的时候，遇到“aspectj-autoproxy”注解时就会使用解析器AspectJAutoProxyBeanDefinitionParser进行解析。
+
+### 7.2.1 注册AspectJAutoProxyBeanDefinitionParser
+
+所有的解析器都是实现了BeanDefinitionParser接口，所以入口都是从parse方法开始的：
+
+```java
+// AspectJAutoProxyBeanDefinitionParser.parse(Element, ParserContext)
+public BeanDefinition parse(Element element, ParserContext parserContext) {
+    // 注册AnnotationAwareAspectJAutoProxyCreator
+    AopNamespaceUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary(
+        parserContext, element);
+    // 对于注解中子类的处理
+    extendBeanDefinition(element, parserContext);
+    return null;
+}
+```
+
+AopNamespaceUtils#registerAspectJAnnotationAutoProxyCreatorIfNecessary方法的逻辑实现：
+
+```java
+public static void registerAspectJAnnotationAutoProxyCreatorIfNecessary(ParserContext parserContext, Element sourceElement) {
+    // 注册或升级AutoProxyCreator定义beanName为org.springframework.aop.config.internalAutoProxyCreator的BeanDefinition
+    BeanDefinition beanDefinition = AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary(parserContext.getRegistry(), parserContext.extractSource(sourceElement));
+    // 对于proxy-target-class以及expose-proxy属性的处理
+    useClassProxyingIfNecessary(parserContext.getRegistry(), sourceElement);
+    // 注册组件并通知，便于监听器做进一步处理
+    registerComponentIfNecessary(beanDefinition, parserContext);
+}
+```
+
+在registerAspectJAnnotationAutoProxyCreatorIfNecessary方法中主要完成了3件事情。
+
+#### 1. 注册或升级AnnotationAwareAspectJAutoProxyCreator
+
+对于AOP的实现，基本上都靠AnnotationAwareAspectJAutoProxyCreator去完成，它可以根据@Point注解定义的切点来自动代理相匹配的bean。但是为了配置简便，Spring使用了自定义配置来帮助注册AnnotationAwareAspectJAutoProxyCreator，其注册过程如下：
+
+```java
+public static BeanDefinition registerAspectJAnnotationAutoProxyCreatorIfNecessary(
+    BeanDefinitionRegistry registry, Object source) {
+    return registerOrEscalateApcAsRequired(
+        AnnotationAwareAspectJAutoProxyCreator.class, registry, source);
+}
+private static BeanDefinition registerOrEscalateApcAsRequired(Class<?> cls, BeanDefinitionRegistry registry, Object source) {
+    // 如果已经存在了自动代理创建器且存在的自动代理创建器与现在的不一致，那么需要根据优先级来判断到底需要使用哪个
+    if (registry.containsBeanDefinition(
+        "org.springframework.aop.config.internalAutoProxyCreator")) {
+        BeanDefinition apcDefinition = registry.getBeanDefinition(
+            "org.springframework.aop.config.internalAutoProxyCreator");
+        if (!cls.getName().equals(apcDefinition.getBeanClassName())) {
+            int currentPriority = findPriorityForClass(apcDefinition.getBeanClassName());
+            int requiredPriority = findPriorityForClass(cls);
+            // 改变bean最重要的就是改变bean对应的className属性
+            if (currentPriority < requiredPriority) {
+                apcDefinition.setBeanClassName(cls.getName());
+            }
+        }
+		// 如果已经存在自动代理创建器并且与将要创建的一致，那么无需再次创建
+        return null;
+    } else {
+        RootBeanDefinition beanDefinition = new RootBeanDefinition(cls);
+        beanDefinition.setSource(source);
+        beanDefinition.getPropertyValues().add("order", -2147483648);
+        beanDefinition.setRole(2);
+        registry.registerBeanDefinition(
+            "org.springframework.aop.config.internalAutoProxyCreator", beanDefinition);
+        return beanDefinition;
+    }
+}
+```
+
+如果已经存在了自动代理创建器，而且存在的自动代理创建器与实现的不一致，那么需要根据优先级来判断到底需要使用哪个。
+
+#### 2. 处理proxy-target-class以及expose-proxy属性
+
+useClassProxyingIfNecessary方法实现了proxy-target-class以及expose-proxy属性的处理：
+
+```java
+private static void useClassProxyingIfNecessary(BeanDefinitionRegistry registry, Element sourceElement) {
+    if (sourceElement != null) {
+        // 对于proxy-target-class属性的处理
+        boolean proxyTargetClass = 
+            Boolean.parseBoolean(sourceElement.getAttribute("proxy-target-class"));
+        if (proxyTargetClass) {
+            AopConfigUtils.forceAutoProxyCreatorToUseClassProxying(registry);
+        }
+		// 对于expose-proxy属性的处理
+        boolean exposeProxy = 
+            Boolean.parseBoolean(sourceElement.getAttribute("expose-proxy"));
+        if (exposeProxy) {
+            AopConfigUtils.forceAutoProxyCreatorToExposeProxy(registry);
+        }
+    }
+}
+// 强制使用的过程其实也是一个属性设置的过程
+public static void forceAutoProxyCreatorToUseClassProxying(BeanDefinitionRegistry registry) {
+    if (registry.containsBeanDefinition(
+        "org.springframework.aop.config.internalAutoProxyCreator")) {
+        BeanDefinition definition = registry.getBeanDefinition(
+            "org.springframework.aop.config.internalAutoProxyCreator");
+        definition.getPropertyValues().add("proxyTargetClass", Boolean.TRUE);
+    }
+}
+
+public static void forceAutoProxyCreatorToExposeProxy(BeanDefinitionRegistry registry) {
+    if (registry.containsBeanDefinition(
+        "org.springframework.aop.config.internalAutoProxyCreator")) {
+        BeanDefinition definition = registry.getBeanDefinition(
+            "org.springframework.aop.config.internalAutoProxyCreator");
+        definition.getPropertyValues().add("exposeProxy", Boolean.TRUE);
+    }
+}
+```
+
+proxy-target-class：Spring AOP部分使用JDK动态代理或者CGLIB来为目标对象创建代理。如果强制使用CGLIB代理，需要将\<aop:config>的proxy-target-class属性设置为true：
+
+```xml
+<aop:config proxy-target-class="true"/>
+```
+
+## 7.3 创建AOP代理
+
+AnnotationAwareAspectJAutoProxyCreator实现了BeanPostProcessor接口，而实现BeanPostProcessor后，当Spring加载这个bean时会在实例化钱调用其postProcessAfterInitialization方法：
+
+在父类AbstractAutoProxyCreator的postProcessAfterInitialization中代码如下：
+
+```java
+public Object postProcessAfterInitialization(Object bean, String beanName) 
+    throws BeansException {
+    if (bean != null) {
+        // 根据给定的bean的class和name构建出个key，格式：beanClassName_beanName
+        Object cacheKey = this.getCacheKey(bean.getClass(), beanName);
+        if (!this.earlyProxyReferences.contains(cacheKey)) {
+            // 如果它适合被代理，则需要封装指定bean
+            return this.wrapIfNecessary(bean, beanName, cacheKey);
+        }
+    }
+    return bean;
+}
+
+protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) {
+    // 如果已经处理过，不需要再处理
+    if (beanName != null && this.targetSourcedBeans.contains(beanName)) {
+        return bean;
+    } 
+    // 无需增强
+    if (Boolean.FALSE.equals(this.advisedBeans.get(cacheKey))) {
+        return bean;
+    }
+    // 给定的bean类型是否代表一个基础设置类，基础设施类不应代理，或者配置了指定bean不需要自动代理
+    if (!this.isInfrastructureClass(bean.getClass()) 
+               && !this.shouldSkip(bean.getClass(), beanName)) {
+        // 如果存在增强反腐，则创建代理
+        Object[] specificInterceptors = this.getAdvicesAndAdvisorsForBean(
+            bean.getClass(), beanName, (TargetSource)null);
+        // 如果获取到了增强，则需要针对增强创建代理
+        if (specificInterceptors != DO_NOT_PROXY) {
+            this.advisedBeans.put(cacheKey, Boolean.TRUE);
+            // 创建代理
+            Object proxy = this.createProxy(bean.getClass(), beanName, 
+                         specificInterceptors, new SingletonTargetSource(bean));
+            this.proxyTypes.put(cacheKey, proxy.getClass());
+            return proxy;
+        } else {
+            this.advisedBeans.put(cacheKey, Boolean.FALSE);
+            return bean;
+        }
+    } else {
+        this.advisedBeans.put(cacheKey, Boolean.FALSE);
+        return bean;
+    }
+}
+```
+
+真正开始代理创建之前还需要经过一些判断，如：是否已经处理过或者是否是需要跳过的bean，而真正创建代理的代码是从getAdvicesAndAdvisorsForBean方法开始的，创建代理主要包含了两个步骤：
+
+（1）获取增强方法或者增强器。
+
+（2）根据获取得增强进行代理。
+
+核心逻辑的时序图如下：
+
+![](./images/AbstractAutoProxyCreator的postProcessAfterInitialization.jpg)
+
+虽然看似简单，但是每个步骤中都经历了大量复杂的逻辑。获取增强方法的实现逻辑：
+
+```java
+// 获取所有的增强
+protected Object[] getAdvicesAndAdvisorsForBean(Class<?> beanClass, String beanName,
+                                                TargetSource targetSource) {
+    List<Advisor> advisors = findEligibleAdvisors(beanClass, beanName);
+    if (advisors.isEmpty()) {
+        return DO_NOT_PROXY;
+    }
+    return advisors.toArray();
+}
+// 寻找所有增强中适用于bean的增强
+protected List<Advisor> findEligibleAdvisors(Class<?> beanClass, String beanName) {
+    List<Advisor> candidateAdvisors = findCandidateAdvisors();
+    List<Advisor> eligibleAdvisors = findAdvisorsThatCanApply(candidateAdvisors,
+                                                              beanClass, beanName);
+    extendAdvisors(eligibleAdvisors);
+    if (!eligibleAdvisors.isEmpty()) {
+        eligibleAdvisors = sortAdvisors(eligibleAdvisors);
+    }
+    return eligibleAdvisors;
+}
+```
+
+对于制定bean的增强方法的获取一定是包含两个步骤的：获取所有的增强以及寻找所有增强中适用于bean的增强并应用。如果无法找到对应的增强器便返回DO_NOT_PROXY（为null）。
+
+### 7.3.1 获取增强器
+
+P187
 
 
 
