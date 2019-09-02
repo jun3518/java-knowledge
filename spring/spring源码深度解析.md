@@ -3976,7 +3976,6 @@ private Advisor getDeclareParentsAdvisor(Field introductionField) {
 ```java
 protected List<Advisor> findAdvisorsThatCanApply(
     List<Advisor> candidateAdvisors, Class<?> beanClass, String beanName) {
-
     ProxyCreationContext.setCurrentProxiedBeanName(beanName);
     try {
         // 过滤已经得到的advisors
@@ -3987,6 +3986,7 @@ protected List<Advisor> findAdvisorsThatCanApply(
     }
 }
 
+// AopUtils#findAdvisorsThatCanApply
 public static List<Advisor> findAdvisorsThatCanApply(List<Advisor> candidateAdvisors, Class<?> clazz) {
     if (candidateAdvisors.isEmpty()) {
         return candidateAdvisors;
@@ -4020,6 +4020,7 @@ findAdvisorsThatCanApply方法的主要功能是寻找所有增强器中适用�
 在获取了所欲对应bean的增强器后，便可以进行代理的创建了。AbstractAutoProxyCreator#createProxy：
 
 ```java
+// AbstractAutoProxyCreator#createProxy
 protected Object createProxy( Class<?> beanClass, String beanName, 
                              Object[] specificInterceptors, TargetSource targetSource) {
 
@@ -4206,7 +4207,6 @@ public Object invoke(Object proxy, Method method, Object[] args) throws Throwabl
             targetSource.releaseTarget(target);
         }
         if (setProxyContext) {
-            // Restore old proxy.
             AopContext.setCurrentProxy(oldProxy);
         }
     }
@@ -4242,9 +4242,170 @@ public Object proceed() throws Throwable {
 }
 ```
 
-在ReflectiveMethodInvocation中的主要职责是维护了链接调用的计数器，记录着当前调用链接的位置，以便链接有序地进行下去，那么在这个方法中并没有之前设想的维护各种增强的顺序，而是将此工作委托给了各个增强器，使用各个增强器在内部进行逻辑实现。
+在proceed方法中，ReflectiveMethodInvocation中的主要职责是维护了链接调用的计数器，记录着当前调用链接的位置，以便链接有序地进行下去，那么在这个方法中并没有之前设想的维护各种增强的顺序，而是将此工作委托给了各个增强器，使用各个增强器在内部进行逻辑实现。
 
+（2）CGLIB代理
 
+Spring完成CGLIB代理的类是委托给CglibAopProxy类取实现的。CglibAopProxy的入口是在getProxy，此方法中实现了Enhancer的创建及接口封装：
+
+```java
+// CglibAopProxy#getProxy(ClassLoader)
+public Object getProxy(ClassLoader classLoader) {
+    try {
+        Class<?> rootClass = this.advised.getTargetClass();
+
+        Class<?> proxySuperClass = rootClass;
+        if (ClassUtils.isCglibProxyClass(rootClass)) {
+            proxySuperClass = rootClass.getSuperclass();
+            Class<?>[] additionalInterfaces = rootClass.getInterfaces();
+            for (Class<?> additionalInterface : additionalInterfaces) {
+                this.advised.addInterface(additionalInterface);
+            }
+        }
+		// 验证
+        validateClassIfNecessary(proxySuperClass, classLoader);
+		// 创建及配置Enhancer
+        Enhancer enhancer = createEnhancer();
+        if (classLoader != null) {
+            enhancer.setClassLoader(classLoader);
+            if (classLoader instanceof SmartClassLoader &&
+                ((SmartClassLoader) classLoader).isClassReloadable(proxySuperClass)) {
+                enhancer.setUseCache(false);
+            }
+        }
+        enhancer.setSuperclass(proxySuperClass);
+        enhancer.setInterfaces(AopProxyUtils.completeProxiedInterfaces(this.advised));
+        enhancer.setNamingPolicy(SpringNamingPolicy.INSTANCE);
+        enhancer.setStrategy(
+            new ClassLoaderAwareUndeclaredThrowableStrategy(classLoader));
+		// 设置拦截器
+        Callback[] callbacks = getCallbacks(rootClass);
+        Class<?>[] types = new Class<?>[callbacks.length];
+        for (int x = 0; x < types.length; x++) {
+            types[x] = callbacks[x].getClass();
+        }
+        enhancer.setCallbackFilter(
+            new ProxyCallbackFilter(
+            	this.advised.getConfigurationOnlyCopy(), this.fixedInterceptorMap,
+                this.fixedInterceptorOffset));
+        enhancer.setCallbackTypes(types);
+        // 生成代理类以及创建代理
+        return createProxyClassAndInstance(enhancer, callbacks);
+    } catch (Throwable ex) {
+        throw new AopConfigException("Unexpected AOP exception", ex);
+    }
+}
+```
+
+其中，最重要的是通过getCallbacks方法设置拦截器链：
+
+```java
+private Callback[] getCallbacks(Class<?> rootClass) throws Exception {
+    // 对于expose-proxy属性的处理
+    boolean exposeProxy = this.advised.isExposeProxy();
+    boolean isFrozen = this.advised.isFrozen();
+    boolean isStatic = this.advised.getTargetSource().isStatic();
+    // 将拦截器封装在DynamicAdvisedInterceptor中
+    Callback aopInterceptor = new DynamicAdvisedInterceptor(this.advised);
+    Callback targetInterceptor;
+    if (exposeProxy) {
+        targetInterceptor = isStatic ?
+            new StaticUnadvisedExposedInterceptor(
+            	this.advised.getTargetSource().getTarget()) :
+        	new DynamicUnadvisedExposedInterceptor(
+                this.advised.getTargetSource());
+    } else {
+        targetInterceptor = isStatic ?
+            new StaticUnadvisedInterceptor(this.advised.getTargetSource().getTarget()) :
+        new DynamicUnadvisedInterceptor(this.advised.getTargetSource());
+    }
+    Callback targetDispatcher = isStatic ?
+        new StaticDispatcher(this.advised.getTargetSource().getTarget()) : new SerializableNoOp();
+
+    Callback[] mainCallbacks = new Callback[] {
+        // 将拦截器链加入Callback中
+        aopInterceptor,
+        targetInterceptor,
+        new SerializableNoOp(),
+        targetDispatcher, this.advisedDispatcher,
+        new EqualsInterceptor(this.advised),
+        new HashCodeInterceptor(this.advised)
+    };
+    Callback[] callbacks;
+    if (isStatic && isFrozen) {
+        Method[] methods = rootClass.getMethods();
+        Callback[] fixedCallbacks = new Callback[methods.length];
+        this.fixedInterceptorMap = new HashMap<String, Integer>(methods.length);
+        for (int x = 0; x < methods.length; x++) {
+            List<Object> chain = 
+                this.advised.getInterceptorsAndDynamicInterceptionAdvice(
+                		methods[x], rootClass);
+            fixedCallbacks[x] = new FixedChainStaticTargetInterceptor(
+                chain, this.advised.getTargetSource().getTarget(), 
+                this.advised.getTargetClass());
+            this.fixedInterceptorMap.put(methods[x].toString(), x);
+        }
+        callbacks = new Callback[mainCallbacks.length + fixedCallbacks.length];
+        System.arraycopy(mainCallbacks, 0, callbacks, 0, mainCallbacks.length);
+        System.arraycopy(fixedCallbacks, 0, callbacks, mainCallbacks.length,
+                         fixedCallbacks.length);
+        this.fixedInterceptorOffset = mainCallbacks.length;
+    } else {
+        callbacks = mainCallbacks;
+    }
+    return callbacks;
+}
+```
+
+在getCallback中，会将advised属性封装在DynamicAdvisedInterceptor并加入在callbacks中。CGLIB中对于方法的拦截是通过将自定义的拦截器（实现了MethodInterceptor接口）加入Callback中并在调用代理时直接激活拦截器中的intercept方法来实现的。加入Callback中后，在再次调用代理时会直接调用DynamicAdvisedInterceptor中的intercept方法。因此，对于CGLIB方式实现的代理，其核心逻辑必然在DynamicAdvisedInterceptor中的intercept中。
+
+```java
+public Object intercept(Object proxy, Method method, Object[] args, MethodProxy methodProxy) throws Throwable {
+    Object oldProxy = null;
+    boolean setProxyContext = false;
+    Class<?> targetClass = null;
+    Object target = null;
+    try {
+        if (this.advised.exposeProxy) {
+            oldProxy = AopContext.setCurrentProxy(proxy);
+            setProxyContext = true;
+        }
+        target = getTarget();
+        if (target != null) {
+            targetClass = target.getClass();
+        }
+        //获取拦截器链
+        List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(
+            method, targetClass);
+        Object retVal;
+        // 如果拦截器链为空则直接激活原方法
+        if (chain.isEmpty() && Modifier.isPublic(method.getModifiers())) {
+            Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+            retVal = methodProxy.invoke(target, argsToUse);
+        } else {
+            // 进入链
+            retVal = new CglibMethodInvocation(
+                proxy, target, method, args, targetClass, chain, methodProxy).proceed();
+        }
+        retVal = processReturnType(proxy, target, method, retVal);
+        return retVal;
+    }
+    finally {
+        if (target != null) {
+            releaseTarget(target);
+        }
+        if (setProxyContext) {
+            AopContext.setCurrentProxy(oldProxy);
+        }
+    }
+}
+```
+
+上述代码的逻辑：首先构造链，然后封装此链进行串联调用。和JDK中直接构造ReflectiveMethodInvocation的区别是，CGLIB使用CglibMethodInvocation，CglibMethodInvocation继承自ReflectiveMethodInvocation，但proceed方法没有重写。
+
+## 7.4 静态AOP使用示例
+
+P212
 
 
 
