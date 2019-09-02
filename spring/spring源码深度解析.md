@@ -4403,9 +4403,9 @@ public Object intercept(Object proxy, Method method, Object[] args, MethodProxy 
 
 上述代码的逻辑：首先构造链，然后封装此链进行串联调用。和JDK中直接构造ReflectiveMethodInvocation的区别是，CGLIB使用CglibMethodInvocation，CglibMethodInvocation继承自ReflectiveMethodInvocation，但proceed方法没有重写。
 
-## 7.4 静态AOP使用示例
+# 第10章 事务
 
-P212
+P265
 
 
 
