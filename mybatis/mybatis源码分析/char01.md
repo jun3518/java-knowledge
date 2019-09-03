@@ -1026,7 +1026,66 @@ public void appendSql(String sql) {
 
 （7）循环结束后，调用DynamicContext.appendSql()方法添加close指定的字符串。
 
+#### ChooseSqlNode
 
+如果在编写动态SQL语句时需要类似switch语句的功能，可以考虑使用\<choose>、\<when>和\<otherwise>三个标签的组合。Mybatis会将\<choose>标签解析成ChooseSqlNode，将\<when>标签解析成IfSqlNode，将\<otherwise>标签解析成MixedSqlNode。
+
+```java
+public class ChooseSqlNode implements SqlNode {
+    // <when>节点对应的IfSqlNode集合
+    private final SqlNode defaultSqlNode;
+    // <otherwise>节点对应的IfSqlNode集合
+    private final List<SqlNode> ifSqlNodes;
+}
+```
+
+首先遍历ifSqlNodes集合，并调用其中SqlNode对象的apply()方法，然后根据前面的处理决定是否调用defaultSqlNode的apply()方法：
+
+```java
+public boolean apply(DynamicContext context) {
+    // 遍历ifSqlNodes集合并调用其中SqlNode对象的apply()方法
+    for (SqlNode sqlNode : ifSqlNodes) {
+        if (sqlNode.apply(context)) {
+            return true;
+        }
+    }
+    // 调用defaultSqlNode.apply()方法
+    if (defaultSqlNode != null) {
+        defaultSqlNode.apply(context);
+        return true;
+    }
+    return false;
+}
+```
+
+#### VarDeclSqlNode
+
+VarDeclSqlNode表示的是动态SQL语句中的\<bind>节点，该节点可以从OGNL表达式中创建一个变量并将其记录到上下文中。在VarDeclSqlNode中通过name字段记录\<bind>节点的name属性值，expression字段记录\<bind>节点的value属性值。
+
+```java
+public class VarDeclSqlNode implements SqlNode {
+
+    private final String name;
+    private final String expression;
+
+    public VarDeclSqlNode(String var, String exp) {
+        name = var;
+        expression = exp;
+    }
+    
+    public boolean apply(DynamicContext context) {
+        // 解析OGNL表达式的值
+        final Object value = OgnlCache.getValue(expression, context.getBindings());
+        // 将name和表达式的值存入DynamicContext.bindings集合中
+        context.bind(name, value);
+        return true;
+    }
+}
+```
+
+### 3.2.5 SqlSourceBuilder
+
+P242
 
 
 
