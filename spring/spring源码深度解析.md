@@ -4405,7 +4405,174 @@ public Object intercept(Object proxy, Method method, Object[] args, MethodProxy 
 
 # 第10章 事务
 
-P265
+## 事务自定义标签
+
+对于Spring中事务功能的代码分析，从配置文件开始入手，在配置文件中有这样一个配置：\<tx:annotation-driven />。此配置是事务的开关，如果没有此配置，那么Spring中将不存在事务的功能。
+
+\<tx:annotation-driven />是一个自定义标签，也会存在相应标签的NamespaceHandler接口实现类，查找发现为TxNamespaceHandler：
+
+```java
+// TxNamespaceHandler#init
+public void init() {
+    registerBeanDefinitionParser("advice", new TxAdviceBeanDefinitionParser());
+    registerBeanDefinitionParser("annotation-driven", 
+                                 new AnnotationDrivenBeanDefinitionParser());
+    registerBeanDefinitionParser("jta-transaction-manager", 
+                                 new JtaTransactionManagerBeanDefinitionParser());
+}
+```
+
+从代码可知，对于"annotation-driven"的自定义标签的解析为AnnotationDrivenBeanDefinitionParser。
+
+```java
+// AnnotationDrivenBeanDefinitionParser#parse
+public BeanDefinition parse(Element element, ParserContext parserContext) {
+    registerTransactionalEventListenerFactory(parserContext);
+    String mode = element.getAttribute("mode");
+    if ("aspectj".equals(mode)) {
+        registerTransactionAspect(element, parserContext);
+    } else {
+        AopAutoProxyConfigurer.configureAutoProxyCreator(element, parserContext);
+    }
+    return null;
+}
+```
+
+### 10.2.1 注册InfrastructureAdvisorAutoProxyCreator
+
+默认的配置进行分析：
+
+```java
+public static void configureAutoProxyCreator(Element element, ParserContext parserContext) {
+    AopNamespaceUtils.registerAutoProxyCreatorIfNecessary(parserContext, element);
+
+    //org.springframework.transaction.config.internalTransactionAdvisor
+    String txAdvisorBeanName = 
+        TransactionManagementConfigUtils.TRANSACTION_ADVISOR_BEAN_NAME;
+    if (!parserContext.getRegistry().containsBeanDefinition(txAdvisorBeanName)) {
+        Object eleSource = parserContext.extractSource(element);
+
+        // 创建AnnotationTransactionAttributeSource的bean
+        RootBeanDefinition sourceDef = new RootBeanDefinition(
+     "org.springframework.transaction.annotation.AnnotationTransactionAttributeSource");
+        sourceDef.setSource(eleSource);
+        sourceDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+        String sourceName = 
+            parserContext.getReaderContext().registerWithGeneratedName(sourceDef);
+        // 创建TransactionInterceptor的bean
+        RootBeanDefinition interceptorDef = 
+            new RootBeanDefinition(TransactionInterceptor.class);
+        interceptorDef.setSource(eleSource);
+        interceptorDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+        registerTransactionManager(element, interceptorDef);
+        interceptorDef.getPropertyValues().add(
+            "transactionAttributeSource", new RuntimeBeanReference(sourceName));
+        // 注册bean，并使用Spring中的定义规则生成beanname
+        String interceptorName = 
+            parserContext.getReaderContext().registerWithGeneratedName(interceptorDef);
+        // 创建BeanFactoryTransactionAttributeSourceAdvisor的bean
+        RootBeanDefinition advisorDef = new 
+            RootBeanDefinition(BeanFactoryTransactionAttributeSourceAdvisor.class);
+        advisorDef.setSource(eleSource);
+        advisorDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+        // 将sourceName的bean注入advisorDef的transactionAttributeSource属性中
+        advisorDef.getPropertyValues().add("transactionAttributeSource", 
+                                           new RuntimeBeanReference(sourceName));
+        // 将interceptorName的bean注入advisorDef的adviceBeanName属性中
+        advisorDef.getPropertyValues().add("adviceBeanName", interceptorName);
+        // 如果配置了order属性，则加入到bean中
+        if (element.hasAttribute("order")) {
+            advisorDef.getPropertyValues().add("order", element.getAttribute("order"));
+        }
+        parserContext.getRegistry().registerBeanDefinition(
+            txAdvisorBeanName, advisorDef);
+		// 创建CompositeComponentDefinition
+        CompositeComponentDefinition compositeDef = 
+            new CompositeComponentDefinition(element.getTagName(), eleSource);
+        compositeDef.addNestedComponent(
+            new BeanComponentDefinition(sourceDef, sourceName));
+        compositeDef.addNestedComponent(
+            new BeanComponentDefinition(interceptorDef, interceptorName));
+        compositeDef.addNestedComponent(
+            new BeanComponentDefinition(advisorDef, txAdvisorBeanName));
+        parserContext.registerComponent(compositeDef);
+    }
+}
+```
+
+上面的代码注册了代理类及三个bean。这三个bean支撑了整个的事务功能。
+
+对于AopNamespaceUtils.registerAutoProxyCreatorIfNecessary(parserContext, element);的代码：
+
+```java
+public static void registerAutoProxyCreatorIfNecessary(
+    ParserContext parserContext, Element sourceElement) {
+
+    BeanDefinition beanDefinition = AopConfigUtils.registerAutoProxyCreatorIfNecessary(
+        parserContext.getRegistry(), parserContext.extractSource(sourceElement));
+    useClassProxyingIfNecessary(parserContext.getRegistry(), sourceElement);
+    registerComponentIfNecessary(beanDefinition, parserContext);
+}
+public static BeanDefinition registerAutoProxyCreatorIfNecessary(
+    BeanDefinitionRegistry registry, Object source) {
+    return registerOrEscalateApcAsRequired(
+        InfrastructureAdvisorAutoProxyCreator.class, registry, source);
+}
+```
+
+这句代码的目的是注册了InfrastructureAdvisorAutoProxyCreator类型的bean。其中该类实现了SmartInstantiationAwareBeanPostProcessor接口，此接口由继承了BeanPostProcessor接口。也就说明在Spring中，所有bean实例化时Spring都会保证调用其postProcessAfterInitialization方法，其实现是在父类AbstractAutoProxyCreator类中实现。
+
+```java
+public Object postProcessAfterInitialization(Object bean, String beanName) {
+    if (bean != null) {
+        // 根据给定的bean的class和name构建出key
+        Object cacheKey = getCacheKey(bean.getClass(), beanName);
+        // 是否由于避免循环依赖 而创建的bean代理
+        if (!this.earlyProxyReferences.contains(cacheKey)) {
+            return wrapIfNecessary(bean, beanName, cacheKey);
+        }
+    }
+    return bean;
+}
+
+protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) {
+    // 如果已经处理过，则忽略
+    if (beanName != null && this.targetSourcedBeans.contains(beanName)) {
+        return bean;
+    }
+    if (Boolean.FALSE.equals(this.advisedBeans.get(cacheKey))) {
+        return bean;
+    }
+    if (isInfrastructureClass(bean.getClass()) || shouldSkip(bean.getClass(), beanName)){
+        this.advisedBeans.put(cacheKey, Boolean.FALSE);
+        return bean;
+    }
+	// 给定的bean类是否代表一个基础设施类，不应代理，或者配置了指定bean不需要自动代理
+    Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(
+        bean.getClass(), beanName, null);
+    if (specificInterceptors != DO_NOT_PROXY) {
+        this.advisedBeans.put(cacheKey, Boolean.TRUE);
+        Object proxy = createProxy(
+            bean.getClass(), beanName, specificInterceptors, 
+            new SingletonTargetSource(bean));
+        this.proxyTypes.put(cacheKey, proxy.getClass());
+        return proxy;
+    }
+
+    this.advisedBeans.put(cacheKey, Boolean.FALSE);
+    return bean;
+}
+```
+
+对于代码中的wrapIfNecessary方法功能实现逻辑大致如下：
+
+（1）找出指定bean对应的增强器。
+
+（2）根据找出的增强器创建代理。
+
+### 10.2.2 获取对应class/method的增强器
+
+
 
 
 
