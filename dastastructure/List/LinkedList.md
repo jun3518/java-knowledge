@@ -625,6 +625,26 @@ listIterator()方法不仅有iterator()的所有api功能，还提供了remove()
 
 遍历LinkedList的操作时遍历整个LinkedList的元素，所有时间复杂度为O(n)。
 
+## LinkedList的for循环（或增强for循环）和iterator()比较
+
+### LinkedList的for循环时间复杂度
+
+```java
+for (int i = 0; i < list.size(); i++) {
+    String s = list.get(i);
+}
+```
+
+从上面的for循环代码中可知，for循环时，会调用get(i)获取指定位置i的元素。根据上面分析的get(i)方法的时间复杂度为O(n)，那么LinkedList的for循环的时间复杂度为 n*n = O(n^2)。
+
+### LinkedList的iterator()循环时间复杂度
+
+从上面的iterator()循环的分析看来，LinkedList的iterator()方法的时间复杂度为O(n)。
+
+### 比较
+
+从上面的分析看来，LinkedList的for循环的时间复杂度为O(n^2)，而iterator()方法的时间复杂度为O(n)。所以建议在遍历LinkedList的时候，使用iterator来遍历LinkedList。
+
 ## LinkedList运用场景
 
-在上述LinkedList增删改查的时间复杂度分析中发现，对于增（在首、尾新增）、删（在在首、尾新删）的时候，时间复杂度为O(1)，而在改（指定位置）、查的时候，时间复杂度为O(n)。所以对于需要频繁增删的列表，建议使用LinkedList。
+在上述LinkedList增删改查的时间复杂度分析中发现，对于增（在首、尾新增）、删（在在首、尾新删）的时候，时间复杂度为O(1)，而在改（指定位置）、查的时候，时间复杂度为O(n)。所以对于需要频繁增删的列表，建议使用LinkedList；所以对于需要频繁查询和修改的列表，不建议使用LinkedList，而是建议使用ArrayList。
