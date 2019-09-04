@@ -1085,15 +1085,218 @@ public class VarDeclSqlNode implements SqlNode {
 
 ### 3.2.5 SqlSourceBuilder
 
-P242
+经过SqlNode.apply()方法的解析之后，SQL语句会被传递到SqlSourceBuilder中进一步的解析。SqlSourceBuilder主要完成了两个方面的操作：一是解析SQL语句中的“#{}”占位符中定义的属性，格式类似于“#{__frc_item_0, javaType=int, jdbcType=NUMERIC, typeHandler=MyTypeHandler}”；另一方面是将SQL语句中的"#{}"占位符替换成"?"占位符。
 
+SqlSourceBuilder也是BaseBuilder的子类之一，其核心逻辑位于parse()方法中：
 
+```java
+/*
+	originalSql:经过SqlNode.apply()方法处理之后的SQL语句
+	parameterType:用户传入的实参类型（parameterType）
+	additionalParameters:记录了形参与实参的对应关系，就是经过SqlNode.apply()方法处理后的
+*/
+public SqlSource parse(String originalSql, Class<?> parameterType, 
+                       Map<String, Object> additionalParameters) {
+    // 创建ParameterMappingTokenHandler对象，它是解析“#{}”占位符中的参数属性以及替换符的核心
+    ParameterMappingTokenHandler handler = new 
+        ParameterMappingTokenHandler(configuration, parameterType, additionalParameters);
+    // 使用GenericTokenParser与ParameterMappingTokenHandler配合解析“#{}”占位符
+    GenericTokenParser parser = new GenericTokenParser("#{", "}", handler);
+    String sql = parser.parse(originalSql);
+    // 创建StaticSqlSource，其中封装了占位符被替换成"?"的SQL语句以及参数对应的ParameterMapping集合
+    return new StaticSqlSource(configuration, sql, handler.getParameterMappings());
+}
+```
 
+ParameterMappingTokenHandler也继承了BaseBuilder，其中各个字段的含义如下：
 
+private static class ParameterMappingTokenHandler extends BaseBuilder implements TokenHandler {
 
+```java
+private static class ParameterMappingTokenHandler 
+    extends BaseBuilder implements TokenHandler {
+	// 用于记录解析得到的ParameterMapping
+    private List<ParameterMapping> parameterMappings = new ArrayList<ParameterMapping>();
+    // 参数类型
+    private Class<?> parameterType;
+    // DynamicContext.bindings集合对应的MetaObject对象
+    private MetaObject metaParameters;
+}
+```
+ParameterMapping中记录了“#{}”占位符中的参数属性，其各个字段的含义如下：
 
+```java
+public class ParameterMapping {
+    private Configuration configuration;
+	// 传入进行的参数name
+    private String property;
+    // 输入参数还是输出参数
+    private ParameterMode mode;
+    // 参数的Java类型
+    private Class<?> javaType = Object.class;
+    // 参数的JDBC类型
+    private JdbcType jdbcType;
+    // 浮点参数的精度
+    private Integer numericScale;
+    // 参数对应的typeHandler对象
+    private TypeHandler<?> typeHandler;
+    //参数对应的ResultMap的id
+    private String resultMapId;
+    // 参数的jdbcTypeName属性
+    private String jdbcTypeName;
+    // 目前还不支持该属性
+    private String expression;
+}
+```
 
+GenericTokenParser对象在执行parse方法时，会调用ParameterMappingTokenHandler.handleToken()方法：
 
+```java
+public String handleToken(String content) {
+    // 创建一个ParameterMapping对象，并添加到parameterMappings集合中保存
+    parameterMappings.add(buildParameterMapping(content));
+    // 返回问号占位符
+    return "?";
+}
+// 负责解析参数属性
+private ParameterMapping buildParameterMapping(String content) {
+    /*
+    	解析参数的属性，并形成Map。如#{__frc_item_0,javaType=int,jdbcType=NUMERIC, 
+    	typeHandler=MyTypeHandler}这个占位符，它就会被解析成如下Map：
+    	{property:__frc_item_0,javaType=int,jdbcType=NUMERIC,typeHandler:MyTypeHandler}
+    */
+    Map<String, String> propertiesMap = parseParameterMapping(content);
+    String property = propertiesMap.get("property");
+    Class<?> propertyType;
+    // 确定参数的javaType属性
+    if (metaParameters.hasGetter(property)) { 
+        propertyType = metaParameters.getGetterType(property);
+    } else if (typeHandlerRegistry.hasTypeHandler(parameterType)) {
+        propertyType = parameterType;
+    } else if (JdbcType.CURSOR.name().equals(propertiesMap.get("jdbcType"))) {
+        propertyType = java.sql.ResultSet.class;
+    } else if (property != null) {
+        MetaClass metaClass = MetaClass.forClass(
+            					parameterType, configuration.getReflectorFactory());
+        if (metaClass.hasGetter(property)) {
+            propertyType = metaClass.getGetterType(property);
+        } else {
+            propertyType = Object.class;
+        }
+    } else {
+        propertyType = Object.class;
+    }
+    // 创建ParameterMapping的建造者，并设置ParameterMapping相关配置
+    ParameterMapping.Builder builder = new ParameterMapping.Builder(
+        									configuration, property, propertyType);
+    Class<?> javaType = propertyType;
+    String typeHandlerAlias = null;
+    for (Map.Entry<String, String> entry : propertiesMap.entrySet()) {
+        String name = entry.getKey();
+        String value = entry.getValue();
+        if ("javaType".equals(name)) {
+            javaType = resolveClass(value);
+            builder.javaType(javaType);
+        } else if ("jdbcType".equals(name)) {
+            builder.jdbcType(resolveJdbcType(value));
+        } else if ("mode".equals(name)) {
+            builder.mode(resolveParameterMode(value));
+        } else if ("numericScale".equals(name)) {
+            builder.numericScale(Integer.valueOf(value));
+        } else if ("resultMap".equals(name)) {
+            builder.resultMapId(value);
+        } else if ("typeHandler".equals(name)) {
+            typeHandlerAlias = value;
+        } else if ("jdbcTypeName".equals(name)) {
+            builder.jdbcTypeName(value);
+        } else if ("property".equals(name)) {
+            // Do Nothing
+        } else if ("expression".equals(name)) {
+            throw new BuilderException("...");
+        } else {
+            throw new BuilderException("...");
+        }
+    }
+    // 获取TypeHandler对象
+    if (typeHandlerAlias != null) {
+        builder.typeHandler(resolveTypeHandler(javaType, typeHandlerAlias));
+    }
+    // 创建ParameterMapping对象。如果没有指定TypeHandler，则会在这里的build()方法中，
+    // 根据javaType和jdbcType从TypeHandlerRegistry中获取对应的TypeHandler对象
+    return builder.build();
+}
+```
+
+经过SqlSourceBuilder解析后，可以得到如下图所示的SQL语句以及parameterMappings集合：
+
+![](../images/sql参数解析的结果.png)
+
+之后，SqlSourceBuilder会将上述SQL语句以及parameterMappings集合封装成StaticSqlSource对象。StaticSqlSource.getBoundSql()方法它直接创建并返回BoundSql对象，该BoundSql对象也就是DynamicSqlSource返回的BoundSql对象。
+
+```java
+public BoundSql getBoundSql(Object parameterObject) {
+    return new BoundSql(configuration, sql, parameterMappings, parameterObject);
+}
+```
+
+BoundSql类中核心字段的含义如下：
+
+```java
+public class BoundSql {
+	// 该字段中级联了SQL语句，该SQL语句中可能含有“?”占位符
+    private String sql;
+    // SQL中的参数属性集合，ParameterMapping的集合
+    private List<ParameterMapping> parameterMappings;
+    // 客户端执行SQL时传入的实际参数
+    private Object parameterObject;
+    // 空的HashMap集合，之后会复制DynamicContext.bindings集合中的内容
+    private Map<String, Object> additionalParameters;
+    // additionalParameters集合对应的MetaObject对象
+    private MetaObject metaParameters;
+}
+```
+
+### 3.2.6 DynamicSqlSource
+
+DynamicSqlSource负责解析动态SQL语句。SqlNode中使用了组合模式，形成了一个树状结构，DynamicSqlSource中使用rootSqlNode字段（SqlNode类型）记录了带解析的SqlNode树的根节点。DynamicSqlSource与MappedStatement以及SqlNode之间的关系如下：
+
+![](../images/DynamicSqlSource与MappedStatement以及SqlNode之间的关系.png)
+
+DynamicSqlSource.getBoundSql()方法的具体实现：
+
+```java
+public BoundSql getBoundSql(Object parameterObject) {
+    // 创建DynamicContext对象，parameterObject是用户传入的实参
+    DynamicContext context = new DynamicContext(configuration, parameterObject);
+    // 通过调用rootSqlNode.apply()方法调用整个树形结构中全部SqlNode.apply()方法
+    rootSqlNode.apply(context);
+   	// 创建SqlSourceBuilder，解析参数属性，并将SQL语句总的“#{}”占位符替换成"?"占位符
+    SqlSourceBuilder sqlSourceParser = new SqlSourceBuilder(configuration);
+    Class<?> parameterType = parameterObject == null ? 
+        							Object.class : parameterObject.getClass();
+    SqlSource sqlSource = sqlSourceParser.parse(
+        					context.getSql(), parameterType, context.getBindings());
+    // 创建BoundSql对象，并将DynamicContext.bindings中的参数信息复制到其additionalParameters
+    // 集合中保存
+    BoundSql boundSql = sqlSource.getBoundSql(parameterObject);
+    for (Map.Entry<String, Object> entry : context.getBindings().entrySet()) {
+        boundSql.setAdditionalParameter(entry.getKey(), entry.getValue());
+    }
+    return boundSql;
+}
+```
+
+### 3.2.7 RawSqlSource
+
+RawSqlSource执行时机不一样，处理的SQL语句类型也不一样。如果节点只包含“#{}”占位符，而不包含动态SQL节点或未解析的"${}"占位符的话，则不是动态SQL语句，会创建相应的StaticTextSqlNode对象。如果不是动态的SQL节点，则创建相应的RawSqlSource对象。
+
+RawSqlSource在构造方法中首先会调用getSql()方法，其中通过调用SqlNode.apply()方法完成SQL语句的拼装和初步处理；之后会使用SqlSourceBuilder完成占位符的替换和parameterMapping集合的创建，并返回StaticSqlSource对象。
+
+无论是StaticSqlSource、DynamicSqlSource还是RawSqlSource，最终都会统一生成BoundSql对象，其中封装了完整的SQL语句（可能包含“?”占位符）、参数映射关系（parameterMappings集合）以及用户传入的参数（additionalParameters集合）。
+
+DynamicSqlSource负责处理动态SQL语句，RawSqlSource负责处理静态SQL语句。DynamicSqlSource解析时机是在实际执行SQL语句之前，而RawSqlSource则是在Mybatis初始化时完成SQL语句的解析。
+
+## 3.3 ResultSetHandler
 
 
 
