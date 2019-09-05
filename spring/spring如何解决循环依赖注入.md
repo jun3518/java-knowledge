@@ -488,6 +488,9 @@ public static void main(String[] args) {
 // AbstractAutowireCapableBeanFactory#doCreateBean
 protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, 
                               final Object[] args) throws BeanCreationException {
+   
+    //...
+    //因为mbd.isSingleton()为false，所以不会提前暴露bean
     boolean earlySingletonExposure = (mbd.isSingleton() 
                                       && this.allowCircularReferences 
                                       &&isSingletonCurrentlyInCreation(beanName));
