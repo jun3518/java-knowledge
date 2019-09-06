@@ -466,7 +466,19 @@ public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException 
 （2）ProxyConfig的isProxyTargetClass方法为true，这表示配置了proxy-target-class=”true”。
 （3）ProxyConfig满足hasNoUserSuppliedProxyInterfaces方法执行结果为true，这表示bean没有实现任何接口或者实现的接口是SpringProxy接口。
 
+#### 使用JdkDynamicAopProxy创建代理
 
+```java
+@Override
+public Object getProxy(ClassLoader classLoader) {
+    Class<?>[] proxiedInterfaces = AopProxyUtils.completeProxiedInterfaces(
+        this.advised, true);
+    findDefinedEqualsAndHashCodeMethods(proxiedInterfaces);
+    return Proxy.newProxyInstance(classLoader, proxiedInterfaces, this);
+}
+```
+
+JdkDynamicAopProxy类实现了java.lang.reflect.InvocationHandler接口。即JDK动态代理的实现逻辑位于JdkDynamicAopProxy#invoke方法中：
 
 
 
