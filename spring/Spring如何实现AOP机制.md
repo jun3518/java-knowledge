@@ -89,6 +89,49 @@ afterTest
 */
 ```
 
+## AOP相关概念
+
+### Joinpoint
+
+Joinpoint（连接点）：连接点是指那些被拦截到的点。在spring中,这些点指的是方法，因为spring只支持方法类型的连接点。
+
+### Pointcut
+
+Pointcut（切点）：切点是指我们要对哪些Joinpoint进行拦截的定义。
+
+### Advice
+
+Advice（通知/增强）：通知是指拦截到Joinpoint之后所要做的事情就是通知。通知分为前置通知、后置通知、异常通知、最终通知、环绕通知。
+
+### Target
+
+Target（目标对象）：要代理的目标对象。
+
+### Weaving
+
+Weaving（织入）：是指把增强应用到目标对象来创建新的代理对象的过程。
+
+### Proxy
+
+Proxy（代理）:一个类被AOP织入增强后，就产生一个结果代理类。
+
+### Aspect
+Aspect（切面）：切面是切入点和通知的结合。
+
+### Advisor
+
+Advisor（通知器）：通知器是一个切点和一个通知结合。通过Advisor，把Advice和Pointcut结合起来，这个结合为是IoC容器的借基础设施。
+
+## Spring的AOP代理种类
+
+### JDK动态代理
+
+JDK动态代理是对实现了接口的类生成代理。
+
+### CGLIB代理
+
+CGLIB是对类生成新的子类，从而进行代理。CGLIB不能对final类和方法进行代理。
+
 ## @EnableAspectJAutoProxy注解
 
 查看@EnableAspectJAutoProxy注解源码：
@@ -118,7 +161,7 @@ class AspectJAutoProxyRegistrar implements ImportBeanDefinitionRegistrar {
 
 查看AnnotationAwareAspectJAutoProxyCreator的集成关系图：
 
-![](E:\spring-aop\spring\images\AnnotationAwareAspectJAutoProxyCreator继承关系.png)
+![](./images/AnnotationAwareAspectJAutoProxyCreator继承关系.png)
 
 在AnnotationAwareAspectJAutoProxyCreator的父类AbstractAutoProxyCreator中实现了BeanPostProcessor接口。BeanPostProcessor接口是后置处理器，是在Spring实例化bean的时候，对bean进行增强。
 
@@ -479,6 +522,115 @@ public Object getProxy(ClassLoader classLoader) {
 ```
 
 JdkDynamicAopProxy类实现了java.lang.reflect.InvocationHandler接口。即JDK动态代理的实现逻辑位于JdkDynamicAopProxy#invoke方法中：
+
+```java
+public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    MethodInvocation invocation;
+    Object oldProxy = null;
+    boolean setProxyContext = false;
+
+    TargetSource targetSource = this.advised.targetSource;
+    Class<?> targetClass = null;
+    Object target = null;
+
+    try {
+        if (!this.equalsDefined && AopUtils.isEqualsMethod(method)) {
+            // 如果目标对象没有实现Object类的基本方法：equals
+            return equals(args[0]);
+        } else if (!this.hashCodeDefined && AopUtils.isHashCodeMethod(method)) {
+            // 如果目标对象没有实现Object类的基本方法：hashCode
+            return hashCode();
+        } else if (method.getDeclaringClass() == DecoratingProxy.class) {
+            // There is only getDecoratedClass() declared -> dispatch to proxy config.
+            return AopProxyUtils.ultimateTargetClass(this.advised);
+        } else if (!this.advised.opaque && method.getDeclaringClass().isInterface() 
+                   && method.getDeclaringClass().isAssignableFrom(Advised.class)) {
+            // 根据代理对象的配置来调用服务
+            return AopUtils.invokeJoinpointUsingReflection(this.advised, method, args);
+        }
+
+        Object retVal;
+
+        if (this.advised.exposeProxy) {
+            // Make invocation available if necessary.
+            oldProxy = AopContext.setCurrentProxy(proxy);
+            setProxyContext = true;
+        }
+
+        // 得到目标对象
+        target = targetSource.getTarget();
+        if (target != null) {
+            targetClass = target.getClass();
+        }
+
+        // 获取拦截器链
+        List<Object> chain = this.advised.
+            getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+        //如果没有拦截器链，则直接调用target的对应方法
+        if (chain.isEmpty()) {
+            Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+            retVal = AopUtils.invokeJoinpointUsingReflection(target, method, argsToUse);
+        } else {
+            // 如果有拦截器链，那么需要调用拦截器之后才调用目标对象的相应方法。
+            // 通过构造一个ReflectiveMethodInvocation来实现。
+            invocation = new ReflectiveMethodInvocation(
+                proxy, target, method, args, targetClass, chain);
+            // 沿着拦截器链继续前进
+            retVal = invocation.proceed();
+        }
+
+        // Massage return value if necessary.
+        Class<?> returnType = method.getReturnType();
+        if (retVal != null && retVal == target 
+            && returnType != Object.class && returnType.isInstance(proxy) 
+            && !RawTargetAccess.class.isAssignableFrom(method.getDeclaringClass())) {
+            retVal = proxy;
+        }
+        else if (retVal == null && returnType != Void.TYPE && returnType.isPrimitive()) {
+            throw new AopInvocationException("...");
+        }
+        return retVal;
+    } finally {
+        if (target != null && !targetSource.isStatic()) {
+            targetSource.releaseTarget(target);
+        }
+        if (setProxyContext) {
+            AopContext.setCurrentProxy(oldProxy);
+        }
+    }
+}
+```
+
+Spring对拦截器链的调用都是在ReflectiveMethodInvocation中通过proceed方法实现的。在proceed方法中，会逐个运行拦截器的拦截方法。在运行拦截器的拦截方法之前，需要对代理方法完成一个匹配判断，通过这个匹配判断来决定拦截器是否满足切面增强的额要求。途观现在已经运行到拦截器链的末尾，那么就会直接调用目标对象的实现方法；否则沿着拦截器链继续进行，得到下一个拦截器，通过这个拦截器进行matches判断，判断是否适用于横切增强的场景，如果是，从拦截器中得到通知器，并启动通知器的invoke方法进行切面增强。在这个过程结束后，会迭代调用proceed方法，直到拦截器链中的拦截器都完成以上的拦截过程为止。
+
+```java
+public Object proceed() throws Throwable {
+    //	private int currentInterceptorIndex = -1;
+    // 如果拦截器链中的拦截器迭代调用完毕，这里开始调用target的函数，这个函数式通过反射机制完成的
+    if (this.currentInterceptorIndex == 
+        this.interceptorsAndDynamicMethodMatchers.size() - 1) {
+        return invokeJoinpoint();
+    }
+	// 这里沿着定义好的interceptorOrInterceptionAdvice链进行处理
+    Object interceptorOrInterceptionAdvice =
+        this.interceptorsAndDynamicMethodMatchers.get(++this.currentInterceptorIndex);
+    if (interceptorOrInterceptionAdvice instanceof InterceptorAndDynamicMethodMatcher) {
+        // 对拦截器进行动态匹配判断
+        InterceptorAndDynamicMethodMatcher dm =
+            (InterceptorAndDynamicMethodMatcher) interceptorOrInterceptionAdvice;
+        if (dm.methodMatcher.matches(this.method, this.targetClass, this.arguments)) {
+            return dm.interceptor.invoke(this);
+        } else {
+            // 动态匹配失败，则proceed会被递归调用，知道所有的拦截器都被运行过为止
+            return proceed();
+        }
+    } else {
+        // 如果是个interceptor，直接调用这个interceptor对应的方法
+        return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+    }
+}
+```
 
 
 

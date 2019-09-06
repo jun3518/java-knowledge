@@ -437,7 +437,31 @@ protected void addSingleton(String beanName, Object singletonObject) {
 
 下一次getBean("classA")时，直接从singletonObjects缓存中获取。
 
-注：对于singletonObjects、earlySingletonObjects、singletonFactories这三个map，在解决单例Setter循环依赖问题时，如果将earlySingletonObjects的作用移除，从代码层面分析也是可以完成解决循环依赖问题的。但是为Spring还会提供earlySingletonObjects这个缓存就不得而知了。
+注：对于singletonObjects、earlySingletonObjects、singletonFactories这三个map，在解决单例Setter循环依赖问题时，如果将earlySingletonObjects的作用移除，从代码层面分析也是可以完成解决循环依赖问题的。但是为什么Spring还会提供earlySingletonObjects这个缓存呢？
+
+网上查了资料，还是没有具体的说明。我个人分析认为，是为了避免频繁调用ClassA对应的暴露出去的ObjectFactory中的AbstractAutowireCapableBeanFactory#getEarlyBeanReference方法被多次调用：
+
+```java
+protected Object getEarlyBeanReference(String beanName, RootBeanDefinition mbd, 
+                                       Object bean) {
+    Object exposedObject = bean;
+    if (bean != null && !mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()){
+        for (BeanPostProcessor bp : getBeanPostProcessors()) {
+            if (bp instanceof SmartInstantiationAwareBeanPostProcessor) {
+                SmartInstantiationAwareBeanPostProcessor ibp =
+                    (SmartInstantiationAwareBeanPostProcessor) bp;
+                exposedObject = ibp.getEarlyBeanReference(exposedObject, beanName);
+                if (exposedObject == null) {
+                    return null;
+                }
+            }
+        }
+    }
+    return exposedObject;
+}
+```
+
+通过earlySingletonObjects缓存，可以避免ClassA对应的暴露出去的ObjectFactory中的AbstractAutowireCapableBeanFactory#getEarlyBeanReference方法被多次调用。从而可能出现一些未知的问题。
 
 ## 原型Setter方式注入循环依赖
 
