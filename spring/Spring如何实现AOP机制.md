@@ -521,6 +521,8 @@ public Object getProxy(ClassLoader classLoader) {
 }
 ```
 
+### JdkDynamicAopProxy创建代理执行过程
+
 JdkDynamicAopProxy类实现了java.lang.reflect.InvocationHandler接口。即JDK动态代理的实现逻辑位于JdkDynamicAopProxy#invoke方法中：
 
 ```java
@@ -602,6 +604,66 @@ public Object invoke(Object proxy, Method method, Object[] args) throws Throwabl
 }
 ```
 
+在this.advised.getInterceptorsAndDynamicInterceptionAdvice方法中，会将Advisor转换成MethodInterceptor的操作：
+
+```java
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Method method, 
+                                                                Class<?> targetClass) {
+    MethodCacheKey cacheKey = new MethodCacheKey(method);
+    List<Object> cached = this.methodCache.get(cacheKey);
+    if (cached == null) {
+        cached = this.advisorChainFactory.getInterceptorsAndDynamicInterceptionAdvice(
+            this, method, targetClass);
+        this.methodCache.put(cacheKey, cached);
+    }
+    return cached;
+}
+//DefaultAdvisorChainFactory#getInterceptorsAndDynamicInterceptionAdvice
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(
+    Advised config, Method method, Class<?> targetClass) {
+
+    for (Advisor advisor : config.getAdvisors()) {
+        if (advisor instanceof PointcutAdvisor) {
+            MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+            interceptorList.addAll(Arrays.asList(interceptors));
+        }
+    } else if (advisor instanceof IntroductionAdvisor) {
+        Interceptor[] interceptors = registry.getInterceptors(advisor);
+        interceptorList.addAll(Arrays.asList(interceptors));
+    }
+    else {
+        Interceptor[] interceptors = registry.getInterceptors(advisor);
+        interceptorList.addAll(Arrays.asList(interceptors));
+    }
+    return interceptorList;
+}
+
+// DefaultAdvisorAdapterRegistry#getInterceptors
+public MethodInterceptor[] getInterceptors(Advisor advisor) {
+    List<MethodInterceptor> interceptors = new ArrayList<MethodInterceptor>(3);
+    Advice advice = advisor.getAdvice();
+    if (advice instanceof MethodInterceptor) {
+        interceptors.add((MethodInterceptor) advice);
+    }
+    for (AdvisorAdapter adapter : this.adapters) {
+        if (adapter.supportsAdvice(advice)) {
+            interceptors.add(adapter.getInterceptor(advisor));
+        }
+    }
+    if (interceptors.isEmpty()) {
+        throw new UnknownAdviceTypeException(advisor.getAdvice());
+    }
+    return interceptors.toArray(new MethodInterceptor[interceptors.size()]);
+}
+
+// 适配器，针对不同的Advisor，将Advisor包装成不同的MethodInterceptor
+public DefaultAdvisorAdapterRegistry() {
+    registerAdvisorAdapter(new MethodBeforeAdviceAdapter());
+    registerAdvisorAdapter(new AfterReturningAdviceAdapter());
+    registerAdvisorAdapter(new ThrowsAdviceAdapter());
+}
+```
+
 Spring对拦截器链的调用都是在ReflectiveMethodInvocation中通过proceed方法实现的。在proceed方法中，会逐个运行拦截器的拦截方法。在运行拦截器的拦截方法之前，需要对代理方法完成一个匹配判断，通过这个匹配判断来决定拦截器是否满足切面增强的额要求。途观现在已经运行到拦截器链的末尾，那么就会直接调用目标对象的实现方法；否则沿着拦截器链继续进行，得到下一个拦截器，通过这个拦截器进行matches判断，判断是否适用于横切增强的场景，如果是，从拦截器中得到通知器，并启动通知器的invoke方法进行切面增强。在这个过程结束后，会迭代调用proceed方法，直到拦截器链中的拦截器都完成以上的拦截过程为止。
 
 ```java
@@ -622,7 +684,7 @@ public Object proceed() throws Throwable {
         if (dm.methodMatcher.matches(this.method, this.targetClass, this.arguments)) {
             return dm.interceptor.invoke(this);
         } else {
-            // 动态匹配失败，则proceed会被递归调用，知道所有的拦截器都被运行过为止
+            // 动态匹配失败，则proceed会被递归调用，直到所有的拦截器都被运行过为止
             return proceed();
         }
     } else {
@@ -632,9 +694,54 @@ public Object proceed() throws Throwable {
 }
 ```
 
+对于MethodInterceptor方法拦截器，是Interceptor的一个重要子类（也是Advice的子类），主要方法：invoke。入参为：MethodInvocation。
+
+对于@Before、@After、@AfterReturning、@AfterThrowing、Around，会分别构造AspectJMethodBeforeAdvice、AspectJAfterAdvice、AspectJAfterReturningAdvice、AspectJAfterThrowingAdvice、AspectJAroundAdvice。
 
 
-<https://blog.csdn.net/zknxx>
+
+
+
+```java
+switch (aspectJAnnotation.getAnnotationType()) {
+    case AtBefore:
+        springAdvice = new AspectJMethodBeforeAdvice(
+            candidateAdviceMethod, expressionPointcut, aspectInstanceFactory);
+        break;
+    case AtAfter:
+        springAdvice = new AspectJAfterAdvice(
+            candidateAdviceMethod, expressionPointcut, aspectInstanceFactory);
+        break;
+    case AtAfterReturning:
+        springAdvice = new AspectJAfterReturningAdvice(
+            candidateAdviceMethod, expressionPointcut, aspectInstanceFactory);
+        AfterReturning afterReturningAnnotation = 
+            (AfterReturning) aspectJAnnotation.getAnnotation();
+        if (StringUtils.hasText(afterReturningAnnotation.returning())) {
+            springAdvice.setReturningName(afterReturningAnnotation.returning());
+        }
+        break;
+    case AtAfterThrowing:
+        springAdvice = new AspectJAfterThrowingAdvice(
+            candidateAdviceMethod, expressionPointcut, aspectInstanceFactory);
+        AfterThrowing afterThrowingAnnotation = 
+            (AfterThrowing) aspectJAnnotation.getAnnotation();
+        if (StringUtils.hasText(afterThrowingAnnotation.throwing())) {
+            springAdvice.setThrowingName(afterThrowingAnnotation.throwing());
+        }
+        break;
+    case AtAround:
+        springAdvice = new AspectJAroundAdvice(
+            candidateAdviceMethod, expressionPointcut, aspectInstanceFactory);
+        break;
+    case AtPointcut:
+        return null;
+    default:
+        throw new UnsupportedOperationException("...");
+}
+```
+
+
 
 
 
