@@ -167,7 +167,7 @@ public boolean addAll(int index, Collection<? extends E> c) {
 }
 ```
 
-addAll(Collection)方法是在数组末尾追加元素。从上面的代码分析，需要移动index位之后的元素向后移动Collection长度个位置，所以时间复杂度为Collection的长度O(n) + 移动的元素个数O(m)，所以时间复杂度为O(n+m)，所以可以简化为O(n)。
+addAll(Collection)方法是在数组末尾追加元素。从上面的代码分析，需要移动index位之后的元素向后移动Collection长度个位置，所以时间复杂度为Collection的长度n+ 移动的元素个数m，所以时间复杂度为O(n+m)，所以可以简化为O(n)。
 
 ## ArrayList删除元素
 
@@ -188,7 +188,7 @@ public E remove(int index) {
 }
 ```
 
-从上面的代码分析，需要移动index位之后的元素移动一位，所以平均移动的元素个数为O(n/2)，所以时间复杂度为O(n)。
+从上面的代码分析，需要移动index位之后的元素移动一位，所以平均移动的元素个数为n/2个，所以时间复杂度为O(n)。
 
 ### remove(Object)
 
@@ -261,7 +261,7 @@ private boolean batchRemove(Collection<?> c, boolean complement) {
 }
 ```
 
-假设Collection的元素个数为n，而数组的元素个数为m，那么Collection.contains方法耗时为O(n)，所以总的耗时为O(m*n)，所以removeAll(Collection)总时间复杂度为O(n^2)。
+假设Collection的元素个数为n，而数组的元素个数为m，所以removeAll(Collection)总时间复杂度为O(n^2)。
 
 ### retainAll(Collection)
 
@@ -491,6 +491,10 @@ iterator耗时：5815200
 从上面的iterator()循环的分析看来，ArrayList的for循环和iterator循环耗时有一些差距，原因在于iterator在遍历的时候，还会做一些校验等操作，所以相对来说耗时较多。
 
 很多时候，不知道接口返回的List是什么类型。对于LinkedList，for循环和iterator遍历性能上iterator优于for循环。那么如果在不知道List是什么类型的情况下，优先考虑使用iterator遍历循环。或者对List进行list instanceof RandomAccess判断，如果为true，则使用for循环，否则使用iterator遍历循环。
+
+## ArrayList线程安全问题
+
+ArrayList是线程不安全的类，即在有多个线程并发访问的情况下，可能会出现并发问题。所以在java.util.AbstractList中声明了一个int类型的变量，ArrayList在不加锁的情况下，如果在使用迭代器操作元素时，发生了对增删改的操作，则抛出ConcurrentModificationException异常。
 
 ## ArrayList运用场景
 
