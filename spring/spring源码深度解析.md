@@ -4940,7 +4940,128 @@ protected TransactionAttribute parseTransactionAnnotation(
 
 ## 10.3 事务增强器
 
-P280
+TransactionInterceptor支撑着整个事务功能的架构。TransactionInterceptor类继承自MethodInterceptor，所以调用该类是从invoke方法开始的：
+
+```java
+public Object invoke(final MethodInvocation invocation) throws Throwable {
+    Class<?> targetClass = (invocation.getThis() != null ?
+                            AopUtils.getTargetClass(invocation.getThis()) : null);
+    return invokeWithinTransaction(invocation.getMethod(), targetClass, 
+                                   new InvocationCallback() {
+                                       @Override
+                                       public Object proceedWithInvocation() throws Throwable {
+                                           return invocation.proceed();
+                                       }
+                                   });
+}
+
+protected Object invokeWithinTransaction(Method method, Class<?> targetClass, 
+                                 final InvocationCallback invocation) throws Throwable {
+
+    // 获取对应事务属性
+    final TransactionAttribute txAttr = 
+        getTransactionAttributeSource().getTransactionAttribute(method, targetClass);
+    // 获取BeanFactory中的transactionManager
+    final PlatformTransactionManager tm = determineTransactionManager(txAttr);
+    // 构造方法唯一表示（类、方法，如UserServiceImpl.save）
+    final String joinpointIdentification = 
+        methodIdentification(method, targetClass, txAttr);
+    // 声明式事务
+    if (txAttr == null || !(tm instanceof CallbackPreferringPlatformTransactionManager)){
+        // 创建TransactionInfo
+        TransactionInfo txInfo = 
+            createTransactionIfNecessary(tm, txAttr, joinpointIdentification);
+        Object retVal = null;
+        try {
+            // 执行被增强的方法
+            retVal = invocation.proceedWithInvocation();
+        } catch (Throwable ex) {
+            // 异常回滚
+            completeTransactionAfterThrowing(txInfo, ex);
+            throw ex;
+        } finally {
+            // 清除信息
+            cleanupTransactionInfo(txInfo);
+        }
+        // 提交事务
+        commitTransactionAfterReturning(txInfo);
+        return retVal;
+    } else {
+        // 编程式事务处理
+        final ThrowableHolder throwableHolder = new ThrowableHolder();
+        try {
+            Object result = ((CallbackPreferringPlatformTransactionManager) tm)
+                .execute(txAttr, new TransactionCallback<Object>() {
+                    @Override
+                    public Object doInTransaction(TransactionStatus status) {
+                        TransactionInfo txInfo = prepareTransactionInfo(
+                            tm, txAttr, joinpointIdentification, status);
+                        try {
+                            return invocation.proceedWithInvocation();
+                        } catch (Throwable ex) {
+                            if (txAttr.rollbackOn(ex)) {
+                                if (ex instanceof RuntimeException) {
+                                    throw (RuntimeException) ex;
+                                } else {
+                                    throw new ThrowableHolderException(ex);
+                                }
+                            } else {
+                                throwableHolder.throwable = ex;
+                                return null;
+                            }
+                        } finally {
+                            cleanupTransactionInfo(txInfo);
+                        }
+                    }
+                });
+            if (throwableHolder.throwable != null) {
+                throw throwableHolder.throwable;
+            }
+            return result;
+        } catch (ThrowableHolderException ex) {
+            throw ex.getCause();
+        } catch (TransactionSystemException ex2) {
+            throw ex2;
+        } catch (Throwable ex2) {
+            throw ex2;
+        }
+    }
+}
+```
+
+在Spring中支持两种事务处理的方式，分别是声明式事务和编程式事务。对于声明式事务的处理主要有以下几个步骤：
+
+（1）获取事务的属性。获取事务属性是支持整个事务功能的基石，如果没有事务属性，其他功能也无从谈起。
+
+获取事务属性是支持整个事务功能的基石，如果没有事务属性，其他功能也无从谈起。
+
+（2）加载配置中配置的TransactionManager。
+
+（3）不同的事务处理方式使用不同的逻辑。
+
+对于声明式事务的处理与编程式事务的处理区别：
+
+​	1）在于事务属性上，因为编程式事务的处理是不需要有事务实行的。
+
+​	2）在TransactionManager上，CallbackPreferringPlatformTransactionManager实现PlatformTransactionManager接口，暴露除一个方法用于执行事务处理中的回调。
+
+这两种方式都可以用作事务处理方式的判断。
+
+（4）在目标方法执行前获取事务并收集事务信息。
+
+事务信息与事务属性并不相同，即TransactionInfo与TransactionAttribute并不相同，TransactionInfo中包含TransactionAttribute信息，但是除了TransactionAttribute外，还有其他事务信息，如：PlatformTransactionManager和TransactionStatus相关信息。
+
+（5）执行目标方法。
+
+（6）一旦出现异常，尝试异常处理。并不是所有异常Spring都会将其回滚，默认只对RuntimeException回滚。
+
+（7）提交事务前的事务信息清除。
+
+（8）提交事务。
+
+### 10.3.1 创建事务
+
+P282
 
 
 
