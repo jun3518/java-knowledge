@@ -4572,27 +4572,375 @@ protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) 
 
 ### 10.2.2 获取对应class/method的增强器
 
+获取指定bean对应的增强器，其中包含两个关键字：增强器与对应。即在AbstractAdvisorAutoProxyCreator#getAdvicesAndAdvisorsForBean方法中，不但要找出增强器，而且还要判断增强器是否满足要求。
+
+```java
+protected Object[] getAdvicesAndAdvisorsForBean(Class<?> beanClass, String beanName, 
+                                                TargetSource targetSource) {
+    List<Advisor> advisors = findEligibleAdvisors(beanClass, beanName);
+    if (advisors.isEmpty()) {
+        return DO_NOT_PROXY;
+    }
+    return advisors.toArray();
+}
+protected List<Advisor> findEligibleAdvisors(Class<?> beanClass, String beanName) {
+    // 寻找候选增强器
+    List<Advisor> candidateAdvisors = findCandidateAdvisors();
+    List<Advisor> eligibleAdvisors = findAdvisorsThatCanApply(candidateAdvisors,
+                                                              beanClass, beanName);
+    extendAdvisors(eligibleAdvisors);
+    if (!eligibleAdvisors.isEmpty()) {
+        eligibleAdvisors = sortAdvisors(eligibleAdvisors);
+    }
+    return eligibleAdvisors;
+}
+```
 
 
 
+#### 1. 寻找候选增强器
 
+```java
+protected List<Advisor> findCandidateAdvisors() {
+    return this.advisorRetrievalHelper.findAdvisorBeans();
+}
 
+public List<Advisor> findAdvisorBeans() {
+    String[] advisorNames = this.cachedAdvisorBeanNames;
+    if (advisorNames == null) {
+        // 寻找符合条件的beanName
+        advisorNames = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+            this.beanFactory, Advisor.class, true, false);
+        this.cachedAdvisorBeanNames = advisorNames;
+    }
+    if (advisorNames.length == 0) {
+        return new ArrayList<Advisor>();
+    }
 
+    List<Advisor> advisors = new ArrayList<Advisor>();
+    for (String name : advisorNames) {
+        if (isEligibleBean(name)) {
+            if (this.beanFactory.isCurrentlyInCreation(name)) {
+            } else {
+                try {
+                    advisors.add(this.beanFactory.getBean(name, Advisor.class));
+                }
+                catch (BeanCreationException ex) {
+                    Throwable rootCause = ex.getMostSpecificCause();
+                    if (rootCause instanceof BeanCurrentlyInCreationException) {
+                        BeanCreationException bce = (BeanCreationException) rootCause;
+                        if (this.beanFactory.isCurrentlyInCreation(bce.getBeanName())) {
+                            continue;
+                        }
+                    }
+                    throw ex;
+                }
+            }
+        }
+    }
+    return advisors;
+}
+```
 
+首先通过BeanFactoryUtils类提供的工具方法获取所有对应的Advisor.class的类。
 
+#### 2. 候选增强器中寻找到匹配项
 
+找出对应的增强器后，接下来的任务就是看这些增强器是否与对应的class或class的方法匹配了。
 
+```java
+protected List<Advisor> findAdvisorsThatCanApply(
+    List<Advisor> candidateAdvisors, Class<?> beanClass, String beanName) {
+    // ...
+    return AopUtils.findAdvisorsThatCanApply(candidateAdvisors, beanClass);
+    // ...
+}
+// AopUtils#findAdvisorsThatCanApply
+public static List<Advisor> findAdvisorsThatCanApply(List<Advisor> candidateAdvisors, 
+                                                     Class<?> clazz) {
+    if (candidateAdvisors.isEmpty()) {
+        return candidateAdvisors;
+    }
+    List<Advisor> eligibleAdvisors = new LinkedList<Advisor>();
+    // 首先处理引介增强
+    for (Advisor candidate : candidateAdvisors) {
+        if (candidate instanceof IntroductionAdvisor && canApply(candidate, clazz)) {
+            eligibleAdvisors.add(candidate);
+        }
+    }
+    boolean hasIntroductions = !eligibleAdvisors.isEmpty();
+    for (Advisor candidate : candidateAdvisors) {
+        // 引介增强已经处理
+        if (candidate instanceof IntroductionAdvisor) {
+            continue;
+        }
+        // 对于普通bean的处理
+        if (canApply(candidate, clazz, hasIntroductions)) {
+            eligibleAdvisors.add(candidate);
+        }
+    }
+    return eligibleAdvisors;
+}
+// AopUtils#canApply(org.springframework.aop.Advisor, java.lang.Class<?>, boolean)
+public static boolean canApply(Advisor advisor, Class<?> targetClass, boolean hasIntroductions) {
+    if (advisor instanceof IntroductionAdvisor) {
+        return ((IntroductionAdvisor) advisor).getClassFilter().matches(targetClass);
+    } else if (advisor instanceof PointcutAdvisor) {
+        PointcutAdvisor pca = (PointcutAdvisor) advisor;
+        return canApply(pca.getPointcut(), targetClass, hasIntroductions);
+    } else {
+        return true;
+    }
+}
+```
 
+在AnnotationDrivenBeanDefinitionParser中除了注入了InfrastructureAdvisorAutoProxyCreator外，还注入了AnnotationTransactionAttributeSource、TransactionInterceptor、BeanFactoryTransactionAttributeSourceAdvisor三个类。
 
+当我们分析的是对于UserService是否适用于此增强方法时，那么当前的advisor就是之前查找出来的类型为BeanFactoryTransactionAttributeSourceAdvisor的bean实例，该实例间接实现了PointcutAdvisor。因此在canApply方法中的第二个if判断，会将BeanFactoryTransactionAttributeSourceAdvisor中的getPointcut方法返回值作为参数继续调用canApply方法：
 
+```java
+else if (advisor instanceof PointcutAdvisor) {
+    PointcutAdvisor pca = (PointcutAdvisor) advisor;
+    return canApply(pca.getPointcut(), targetClass, hasIntroductions);
+}
+// BeanFactoryTransactionAttributeSourceAdvisor#getPointcut
+public Pointcut getPointcut() {
+    return this.pointcut;
+}
+//BeanFactoryTransactionAttributeSourceAdvisor#pointcut
+private final TransactionAttributeSourcePointcut pointcut = new TransactionAttributeSourcePointcut() {
+    protected TransactionAttributeSource getTransactionAttributeSource() {
+        return BeanFactoryTransactionAttributeSourceAdvisor.
+            this.transactionAttributeSource;
+    }
+};
+// 最后在ProxyTransactionManagementConfiguration中发现，TransactionAttributeSource注入的是
+// AnnotationTransactionAttributeSource
+// ProxyTransactionManagementConfiguration#transactionAdvisor
+@Bean(name = TransactionManagementConfigUtils.TRANSACTION_ADVISOR_BEAN_NAME)
+@Role(BeanDefinition.ROLE_INFRASTRUCTURE)
+public BeanFactoryTransactionAttributeSourceAdvisor transactionAdvisor() {
+    BeanFactoryTransactionAttributeSourceAdvisor advisor = 
+        new BeanFactoryTransactionAttributeSourceAdvisor();
+    advisor.setTransactionAttributeSource(transactionAttributeSource());
+    advisor.setAdvice(transactionInterceptor());
+    advisor.setOrder(this.enableTx.<Integer>getNumber("order"));
+    return advisor;
+}
+@Bean
+@Role(BeanDefinition.ROLE_INFRASTRUCTURE)
+public TransactionAttributeSource transactionAttributeSource() {
+    return new AnnotationTransactionAttributeSource();
+}
+```
 
+知道pca.getPointcut()的来源后（是BeanFactoryTransactionAttributeSourceAdvisor中声明的TransactionAttributeSourcePointcut），继续跟踪canApply(pca.getPointcut(), targetClass, hasIntroductions)方法：
 
+```java
+public static boolean canApply(Pointcut pc, Class<?> targetClass, 
+                               boolean hasIntroductions) {
+    if (!pc.getClassFilter().matches(targetClass)) {
+        return false;
+    }
+	// 此时的pc表示TransactionAttributeSourcePointcut，pc.getMethodMatcher()返回的正是自身this
+    MethodMatcher methodMatcher = pc.getMethodMatcher();
+    if (methodMatcher == MethodMatcher.TRUE) {
+        return true;
+    }
 
+    IntroductionAwareMethodMatcher introductionAwareMethodMatcher = null;
+    if (methodMatcher instanceof IntroductionAwareMethodMatcher) {
+        introductionAwareMethodMatcher = (IntroductionAwareMethodMatcher) methodMatcher;
+    }
 
+    Set<Class<?>> classes = new LinkedHashSet<Class<?>>
+        (ClassUtils.getAllInterfacesForClassAsSet(targetClass));
+    classes.add(targetClass);
+    for (Class<?> clazz : classes) {
+        Method[] methods = ReflectionUtils.getAllDeclaredMethods(clazz);
+        for (Method method : methods) {
+            if ((introductionAwareMethodMatcher != null &&
+                 introductionAwareMethodMatcher.matches(method, targetClass,
+                     hasIntroductions)) || methodMatcher.matches(method, targetClass)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+```
 
+整体流程如下：首先获取对应类的所有接口并连同类本身一起遍历，遍历过程中又对类中的方法再次遍历，一旦匹配成功便认为这个类适用于当前增强器。
 
+在做匹配的时候，methodMatcher.matches(method, targetClass))会使用TransactionAttributeSourcePointcut类的matches方法：
 
+```java
+public boolean matches(Method method, Class<?> targetClass) {
+    if (targetClass != null && TransactionalProxy.class.isAssignableFrom(targetClass)) {
+        return false;
+    } else {
+        // 自定义标签解析时注入
+        TransactionAttributeSource tas = this.getTransactionAttributeSource();
+        return tas == null || tas.getTransactionAttribute(method, targetClass) != null;
+    }
+}
+```
 
+此时的tas表示AnnotationTransactionAttributeSource类型，而AnnotationTransactionAttributeSource类型的getTransactionAttribute方法如下：
+
+```java
+public TransactionAttribute getTransactionAttribute(Method method, Class<?> targetClass){
+    if (method.getDeclaringClass() == Object.class) {
+        return null;
+    }
+    Object cacheKey = getCacheKey(method, targetClass);
+    TransactionAttribute cached = this.attributeCache.get(cacheKey);
+    if (cached != null) {
+        if (cached == NULL_TRANSACTION_ATTRIBUTE) {
+            return null;
+        } else {
+            return cached;
+        }
+    } else {
+        TransactionAttribute txAttr = computeTransactionAttribute(method, targetClass);
+        if (txAttr == null) {
+            this.attributeCache.put(cacheKey, NULL_TRANSACTION_ATTRIBUTE);
+        } else {
+            String methodIdentification = ClassUtils.getQualifiedMethodName(
+                method, targetClass);
+            if (txAttr instanceof DefaultTransactionAttribute) {
+                ((DefaultTransactionAttribute)txAttr).setDescriptor(
+                    methodIdentification);
+            }
+            this.attributeCache.put(cacheKey, txAttr);
+        }
+        return txAttr;
+    }
+}
+```
+
+尝试从缓存中加载，如果对应信息没有被缓存的话，工作委托给computeTransactionAttribute方法，此方法完成实物标签的提取过程。
+
+#### 3. 提取事务标签
+
+```java
+protected TransactionAttribute computeTransactionAttribute(Method method, Class<?> targetClass) {
+    if (allowPublicMethodsOnly() && !Modifier.isPublic(method.getModifiers())) {
+        return null;
+    }
+    Class<?> userClass = ClassUtils.getUserClass(targetClass);
+    // method代表接口中的方法，specificMethod代表实现类中的方法
+    Method specificMethod = ClassUtils.getMostSpecificMethod(method, userClass);
+    specificMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+    // 查看方法中是否存在事务声明
+    TransactionAttribute txAttr = findTransactionAttribute(specificMethod);
+    if (txAttr != null) {
+        return txAttr;
+    }
+	// 查看方法所在类中是否存在事务声明
+    txAttr = findTransactionAttribute(specificMethod.getDeclaringClass());
+    if (txAttr != null && ClassUtils.isUserLevelMethod(method)) {
+        return txAttr;
+    }
+	// 如果存在接口，则到接口中取寻找
+    if (specificMethod != method) {
+        // 查找接口方法
+        txAttr = findTransactionAttribute(method);
+        if (txAttr != null) {
+            return txAttr;
+        }
+        // 到接口中的类中取寻找
+        txAttr = findTransactionAttribute(method.getDeclaringClass());
+        if (txAttr != null && ClassUtils.isUserLevelMethod(method)) {
+            return txAttr;
+        }
+    }
+    return null;
+}
+```
+
+如果方法中存在事务属性，则使用方法上的属性，否则使用方法所在的类上的属性；如果方法所在类的属性上还是没有搜寻到对应的属性事务，那么再搜寻接口中的方法；再每一的话，最后尝试搜寻接口的类上的声明方法。
+
+上面的函数中并没有真正的去搜寻事务属性的逻辑，而是搭建了执行框架，将搜寻事务属性的任务委托给了findTransactionAttribute方法去执行。
+
+```java
+protected TransactionAttribute findTransactionAttribute(Method method) {
+    return determineTransactionAttribute(method);
+}
+
+protected TransactionAttribute determineTransactionAttribute(AnnotatedElement element) {
+    if (element.getAnnotations().length > 0) {
+        for (TransactionAnnotationParser annotationParser : this.annotationParsers) {
+            TransactionAttribute attr = 
+                annotationParser.parseTransactionAnnotation(element);
+            if (attr != null) {
+                return attr;
+            }
+        }
+    }
+    return null;
+}
+```
+
+this.annotationParsers是在当前类AnnotationTransactionAttributeSource初始化的时候初始化的，其中的值被加入了SpringTransactionAnnotationParser，即当进行属性获取得时候其实是使用SpringTransactionAnnotationParser类的parseTransactionAnnotation方法进行解析的：
+
+```java
+// SpringTransactionAnnotationParser#parseTransactionAnnotation(AnnotatedElement)
+public TransactionAttribute parseTransactionAnnotation(AnnotatedElement element) {
+    AnnotationAttributes attributes=AnnotatedElementUtils.getMergedAnnotationAttributes(
+        element, Transactional.class);
+    if (attributes != null) {
+        return parseTransactionAnnotation(attributes);
+    }
+    else {
+        return null;
+    }
+}
+protected TransactionAttribute parseTransactionAnnotation(
+    AnnotationAttributes attributes) {
+    RuleBasedTransactionAttribute rbta = new RuleBasedTransactionAttribute();
+    // 解析propagation
+    Propagation propagation = attributes.getEnum("propagation");
+    rbta.setPropagationBehavior(propagation.value());
+    // 解析isolation
+    Isolation isolation = attributes.getEnum("isolation");
+    rbta.setIsolationLevel(isolation.value());
+    // 解析timeout
+    rbta.setTimeout(attributes.getNumber("timeout").intValue());
+    // 解析readOnly
+    rbta.setReadOnly(attributes.getBoolean("readOnly"));
+    // 解析value
+    rbta.setQualifier(attributes.getString("value"));
+    List<RollbackRuleAttribute> rollbackRules = new ArrayList<RollbackRuleAttribute>();
+	// 解析rollbackFor
+    for (Class<?> rbRule : attributes.getClassArray("rollbackFor")) {
+        rollbackRules.add(new RollbackRuleAttribute(rbRule));
+    }
+    // 解析rollbackForClassName
+    for (String rbRule : attributes.getStringArray("rollbackForClassName")) {
+        rollbackRules.add(new RollbackRuleAttribute(rbRule));
+    }
+    // 解析noRollbackFor
+    for (Class<?> rbRule : attributes.getClassArray("noRollbackFor")) {
+        rollbackRules.add(new NoRollbackRuleAttribute(rbRule));
+    }
+    // 解析noRollbackForClassName
+    for (String rbRule : attributes.getStringArray("noRollbackForClassName")) {
+        rollbackRules.add(new NoRollbackRuleAttribute(rbRule));
+    }
+    rbta.setRollbackRules(rollbackRules);
+
+    return rbta;
+}
+```
+
+上面方法中实现了对对应类或者方法的事务属性解析，可以在这个类中看到任何常用或者不常用的属性提取。
+
+当判断某个bean适用于事务增强时，即适用于增强器BeanFactoryTransactionAttributeSourceAdvisor。BeanFactoryTransactionAttributeSourceAdvisor作为Advisor的实现类，自然要遵从Advisor的处理方式，当代理被调用时会调用这个类的增强方法，即此bean的Advice，又因为在解析事务定义标签时把TransactionInterceptor类型的bean注入到BeanFactoryTransactionAttributeSourceAdvisor中，所以在调用事务增强器增强的代理类时，会首先执行TransactionInterceptor进行增强，即在TransactionInterceptor类中的invoke方法中完成了整个事务的逻辑。
+
+## 10.3 事务增强器
+
+P280
 
 
 
