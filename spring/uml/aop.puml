@@ -1,0 +1,27 @@
+@startuml
+AbstractAutoProxyCreator -> AbstractAutoProxyCreator: 1. postProcessAfterInitialization
+
+AbstractAutoProxyCreator -> AbstractAutoProxyCreator: 2. wrapIfNecessary
+
+AbstractAutoProxyCreator -> AbstractAutoProxyCreator: 3. 是否忽略:Advice、Pointcut、Advisor、AopInfrastructureBean、Aspect类型则忽略
+
+AbstractAutoProxyCreator -> AbstractAdvisorAutoProxyCreator:4. getAdvicesAndAdvisorsForBean
+
+AbstractAdvisorAutoProxyCreator -> AbstractAdvisorAutoProxyCreator:4.1 查找适配的Advisor：findEligibleAdvisors
+
+AbstractAdvisorAutoProxyCreator -> AnnotationAwareAspectJAutoProxyCreator:4.2 查找所有的Advisor：findCandidateAdvisors
+
+AnnotationAwareAspectJAutoProxyCreator -> AbstractAdvisorAutoProxyCreator: 4.2.1 查找容器中所有的Advisor：super.findCandidateAdvisors
+
+AnnotationAwareAspectJAutoProxyCreator -> AnnotationAwareAspectJAutoProxyCreator: 4.2.2 查找容器中Aspect的Advice，并封装成Advisor
+
+AnnotationAwareAspectJAutoProxyCreator -> AbstractAdvisorAutoProxyCreator:4.2.3 返回容器中所有的Advisor
+
+AbstractAdvisorAutoProxyCreator -> AbstractAdvisorAutoProxyCreator: 4.3 查找符合增强条件的Advisor：findAdvisorsThatCanApply
+
+AbstractAdvisorAutoProxyCreator -> AbstractAdvisorAutoProxyCreator: 4.4 对符合增强条件的Advisor排序：sortAdvisors
+
+AbstractAdvisorAutoProxyCreator -> AbstractAutoProxyCreator:根据获取到的Advisor创建代理类
+
+
+@enduml
