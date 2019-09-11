@@ -3546,7 +3546,7 @@ protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) 
     // 给定的bean类型是否代表一个基础设置类，基础设施类不应代理，或者配置了指定bean不需要自动代理
     if (!this.isInfrastructureClass(bean.getClass()) 
                && !this.shouldSkip(bean.getClass(), beanName)) {
-        // 如果存在增强反腐，则创建代理
+        // 如果存在增强器，则创建代理
         Object[] specificInterceptors = this.getAdvicesAndAdvisorsForBean(
             bean.getClass(), beanName, (TargetSource)null);
         // 如果获取到了增强，则需要针对增强创建代理

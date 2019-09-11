@@ -6,7 +6,12 @@ Spring通过在配置文件中加入元素开启注解切面功能：
 
 ```xml
 <!-- 开启基于注解版的切面功能 -->
-<aop:aspectj-autoproxy />
+<beans xmlns:aop="http://www.springframework.org/schema/aop"
+       xsi:schemaLocation="http://www.springframework.org/schema/aop 
+                           http://www.springframework.org/schema/aop/spring-aop-4.3.xsd">
+
+    <aop:aspectj-autoproxy />
+</beans>
 ```
 
 其中\<aop:aspectj-autoproxy />是自定义标签元素，自定义标签元素通过Spring提供的org.springframework.beans.factory.xml.NamespaceHandler接口来完成自定义标签的解析。
