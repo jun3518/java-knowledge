@@ -504,6 +504,183 @@ Child 构造器
 
 即：用户自定义类加载器 -> 系统类加载器 -> 扩展类加载器 -> 根类加载器。
 
+### 类与接口初始化的异同
+
+```java
+public class Test03 {
+
+	public static void main(String[] args) {
+		
+		System.out.println(MyChild03.num);
+		
+	}
+}
+
+interface MyParent03 {
+	
+	public static Thread thread = new Thread() {
+		{
+			System.out.println("MyInterface run...");
+		}
+	};
+}
+
+class MyChild03 implements MyParent03 {
+	
+	public static int num = 3;
+    
+	static {
+		System.out.println("MyChild03 static block...");
+	}
+}
+
+/*
+打印结果：
+MyChild03 static block...
+3
+*/
+```
+
+从打印结果来看，说明MyParent03的thread类变量没有被执行，即MyChild03加载时，接口MyParent03没有被加载。
+
+### 类加载器双亲委托机制详解
+
+除了虚拟机自带的加载器外，用户可以定制自己的类加载器。Java提供了抽象类java.lang.ClassLoader，所有用户自定义的类加载器都应该继承ClassLoader类。
+
+在父亲委托机制中，各个加载器按照父子关系形成了树形结构，除了根类加载器之外，其余的类加载器都有且只有一个父加载器。
+
+![](./images/类加载器的父亲委托机制.png)
+
+（1）Bootstrap ClassLoader（启动类加载器）：$JAVA_HOME中jre/lib/rt.jar里所有的class，由C++实现，不是ClassLoader子类。
+
+（2）Extension ClassLoader（扩展类加载器）：负责加载Java平台中扩展功能的一些jar包，包括$JAVA_HOME中jre/lib/*.jar或-Djava.ext.dirs指定目录下的jar包。
+
+（3）App ClassLoader（系统类加载器）：负责加载classpath中指定的jar包及目录中class。
+
+若有一个类加载器能够成功加载自定义的Test类，那么这个类加载器被称为自定义类加载器。所有能够成功返回Class对象引用的类加载器（包括定义类加载器）都被称为初始类加载器。
+
+```java
+public class Test04 {
+
+    public static void main(String[] args) throws Exception {
+
+        Class<?> clazz = Class.forName("java.lang.String");
+        System.out.println(clazz.getClassLoader());
+
+        Class<?> clazz02 = Class.forName("jvm.demo01.C");
+        System.out.println(clazz02.getClassLoader());
+
+    }
+}
+
+class C {
+}
+
+/*
+打印结果：
+null
+sun.misc.Launcher$AppClassLoader@2a139a55
+*/
+```
+
+### 类加载器与类初始化过程
+
+```java
+public class Test05 {
+
+    public static void main(String[] args) {
+
+        System.out.println(Child05.a);
+
+        System.out.println("-----------");
+
+        Child05.doSomething();
+
+    }
+}
+
+class Parent05 {
+
+    public static int a = 5;
+
+    static {
+        System.out.println("Parent05 static block");
+    }
+
+    public static void doSomething() {
+        System.out.println("Parent05 doSomething");
+    }
+}
+
+class Child05 extends Parent05 {
+    static {
+        System.out.println("Child05 static block");
+    }
+}
+/*
+打印结果：
+Parent05 static block
+5
+-----------
+Parent05 doSomething
+*/
+```
+
+从打印结果来看，可以总结几个点：
+
+（1）子类调用父类定义的静态成员变量时：子类.父类静态成员变量，其实在编译的时候会改写成由父类调用：父类.静态成员变量。
+
+（2）不操作子类的静态方法或静态成员变量，而是直接操作父类的静态方法或静态成员变量时，不会加载子类。
+
+（3）子类可以操作父类的静态非或静态成员变量（非私有）。
+
+注：子类操作父类的静态方法或静态成员变量时，本质上都是父类的主动使用，而不是子类。
+
+
+
+```java
+public class Test06 {
+
+	public static void main(String[] args) throws Exception {
+
+		ClassLoader loader = ClassLoader.getSystemClassLoader();
+		Class<?> cl01 = loader.loadClass("jvm.demo01.CL");
+		System.out.println(cl01);
+
+		System.out.println("------------");
+
+		Class<?> cl02 = Class.forName("jvm.demo01.CL");
+		System.out.println(cl02);
+	}
+}
+
+class CL {
+
+	static {
+		System.out.println("Class CL");
+	}
+}
+/*
+打印结果：
+class jvm.demo01.CL
+------------
+Class CL
+class jvm.demo01.CL
+*/
+```
+
+从上面的打印情况可以知道：调用ClassLoader类的loadClass方法加载一个类，并不是对类的主动使用，不会导致类的初始化。
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -32,3 +32,7 @@
 
 （3）如果构造线程对象时未传入ThreadGroup，Thread会默认获取父线程的ThreadGroup作为该线程的ThreadGroup，此时子线程和父线程将会在同一个threadGroup中。
 
+（4）构造Thread的时候传入stackSize代表着该线程占用的stack大小，如果没有指定stackSize的大小，默认是0，0代表着会忽略该参数，该参数会被JNI函数去使用。
+
+需要注意：该参数有些平台有效，在有些平台则无效。
+
