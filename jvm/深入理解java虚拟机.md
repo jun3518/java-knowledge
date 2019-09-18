@@ -671,7 +671,117 @@ class jvm.demo01.CL
 
 从上面的打印情况可以知道：调用ClassLoader类的loadClass方法加载一个类，并不是对类的主动使用，不会导致类的初始化。
 
+### 获取ClassLoader的途径
 
+1、获取当前类的ClassLoader
+
+​	clazz.getClassLoader();
+
+2、获得当前线程上下文的ClassLoader
+
+​	Thread.currentThread().getContextClassLoader();
+
+3、获得调用者ClassLoader
+
+DriverManager.getCallerClassLoader();
+
+注：数组实例不是由类加载器创建的，数组类型是由JVM在运行时期动态生成的，即由虚拟机在运行时根据需要创建的。
+
+```java
+public class Test07 {
+
+    public static void main(String[] args) {
+		
+		String[] strs = new String[10];
+		System.out.println(strs.getClass().getClassLoader());
+		System.out.println("---------");
+		Test07[] test07s = new Test07[10];
+		System.out.println(test07s.getClass().getClassLoader());
+		System.out.println("--------");
+		int[] ints = new int[10];
+		System.out.println(ints.getClass().getClassLoader());
+		System.out.println("--------");
+		System.out.println(int.class.getClassLoader());
+	}
+}
+/*
+null
+---------
+sun.misc.Launcher$AppClassLoader@2a139a55
+--------
+null
+--------
+null
+*/
+```
+
+从打印结果来看，因为String是由启动类加载器加载的，所以对应的String[]的类加载器为null；而Test07是用户自定义的类，所以Test07[]由AppClassLoader类加载器加载，所以对应的类加载器为sun.misc.Launcher$AppClassLoader；而原生类型int、float等，是没有类加载器的，所以对应的原生类型数组的类加载器为null。
+
+### 自定义类加载器
+
+```java
+public class Test08 extends ClassLoader {
+
+    private String classLoaderName;
+
+    private final String fileExtension = ".class";
+
+    public Test08(String classLoaderName) {
+        super();
+        this.classLoaderName = classLoaderName;
+    }
+
+    @Override
+    protected Class<?> findClass(String name) throws ClassNotFoundException {
+        byte[] data = this.loadClassData(name);
+
+        return this.defineClass(name, data, 0, data.length);
+
+    }
+
+    @Override
+    public String toString() {
+        return "[" + classLoaderName + "]";
+    }
+
+    private byte[] loadClassData(String name) {
+
+        name = name.replaceAll(".", "/");
+
+        try(InputStream is = new FileInputStream(name + fileExtension);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();) {
+
+            int ch = 0;
+
+            while(-1 != (ch = is.read())) {
+                baos.write(ch);
+            }
+
+            return baos.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+
+    public static void main(String[] args) throws Exception {
+
+        Test08 loader = new Test08("loader01");
+
+        Class<?> clazz = loader.loadClass(Test07.class.getName());
+
+        Object object = clazz.newInstance();
+
+        System.out.println(object);
+    }
+}
+/*
+打印结果：
+[loader01]
+jvm.demo01.Test07@7852e922
+*/
+```
 
 
 
@@ -699,15 +809,27 @@ class jvm.demo01.CL
 
 助记符：
 
-ldc：表示将int、float或是String类型的常量从常量池中推送至栈顶。
+### ldc：
 
-bipush：表示将单字节（-128~127）的常量值推送至栈顶。
+表示将int、float或是String类型的常量从常量池中推送至栈顶。
 
-sipush：表示将一个短整型常量值推送到栈顶。
+### bipush：
 
-iconst_1：表示将int类型1推送至栈顶（iconst_1~iconst_5）。
+表示将单字节（-128~127）的常量值推送至栈顶。
 
-anewarray：表示创建一个引用类型的（如类、接口、数组）数组，并将其引用值压入栈顶。
+### sipush：
 
-newarray：表示创建一个指定的原始类型（如int、float、char等）的数组，并将其引用值压入栈顶。
+表示将一个短整型常量值推送到栈顶。
+
+### iconst_1：
+
+表示将int类型1推送至栈顶（iconst_1~iconst_5）。
+
+### anewarray：
+
+表示创建一个引用类型的（如类、接口、数组）数组，并将其引用值压入栈顶。
+
+### newarray：
+
+表示创建一个指定的原始类型（如int、float、char等）的数组，并将其引用值压入栈顶。
 
